@@ -124,3 +124,5 @@ for i, row in df_ativos.iterrows():
 st.write("---")
 if st.checkbox("📊 Ver Relatório Completo (Planilha Cloud)"):
     st.dataframe(df)
+    
+Lavanderia Lavo e Levo
