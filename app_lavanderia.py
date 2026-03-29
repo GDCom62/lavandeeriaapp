@@ -1,13 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Lavo e Levo V7 - Produtividade", page_icon="🧺", layout="wide")
+st.set_page_config(page_title="Lavo e Levo V8 - Inteligência", layout="wide")
 
-# --- BANCO DE DADOS (LOCAL/NUVEM) ---
+# --- BANCO DE DADOS ---
 ARQUIVO_LOCAL = "dados_lavanderia.csv"
-
 def carregar_dados():
     try:
         from streamlit_gsheets import GSheetsConnection
@@ -15,102 +14,80 @@ def carregar_dados():
         df = conn.read(ttl="0")
         if not df.empty: return df, conn
     except: pass
-    if os.path.exists(ARQUIVO_LOCAL):
-        return pd.read_csv(ARQUIVO_LOCAL), None
-    cols = ["id", "cli", "p_in", "p_out", "status", "resp", "detalhes", "itens", "h_entrada", "tempos_json"]
+    if os.path.exists(ARQUIVO_LOCAL): return pd.read_csv(ARQUIVO_LOCAL), None
+    cols = ["id", "cli", "p_in", "status", "resp", "detalhes", "tempos_json", "maq"]
     return pd.DataFrame(columns=cols), None
-
-def salvar_dados(df_atual, conn):
-    if conn:
-        conn.update(data=df_atual)
-        st.cache_data.clear()
-    else:
-        df_atual.to_csv(ARQUIVO_LOCAL, index=False)
 
 df, conexao = carregar_dados()
 
-# Funções de Tempo
-def agora(): return datetime.now().strftime("%H:%M")
-def agora_bruto(): return datetime.now().isoformat()
+# --- CONFIGURAÇÃO DE RENDIMENTO (PROJETADO) ---
+# Quantos minutos por KG em cada máquina (Exemplo ajustável)
+MIN_POR_KG_LAVAR = 2.0  # 20kg = 40min projetado
+MIN_POR_KG_SECAR = 3.0  # 20kg = 60min projetado
 
-st.title("🧺 LAVANDERIA LAVO E LEVO - V7")
-st.caption(f"Status: {'☁️ NUVEM' if conexao else '💻 LOCAL'} | Foco: Produtividade e Cronometragem")
+def calcular_projetado(peso, etapa):
+    if etapa == "Lavagem": return int(peso * MIN_POR_KG_LAVAR)
+    if etapa == "Secagem": return int(peso * MIN_POR_KG_SECAR)
+    return 30 # Padrão para dobras/passagem
 
-# --- 1. ENTRADA (LAVAGEM) ---
-with st.expander("➕ 1. RECEBIMENTO HOSPITALAR / LAVAGEM", expanded=True):
+st.title("🧺 LAVANDERIA LAVO E LEVO - V8")
+st.caption(f"Foco: Projetado vs Realizado (Peso {MIN_POR_KG_LAVAR}min/kg Lavar | {MIN_POR_KG_SECAR}min/kg Secar)")
+
+# --- 1. ENTRADA ---
+with st.expander("➕ 1. ENTRADA HOSPITALAR", expanded=True):
     with st.form("f1", clear_on_submit=True):
         c1, c2 = st.columns(2)
-        cli = c1.text_input("Hospital/Cliente:")
-        p_in = c2.number_input("Peso Entrada (kg):", 0.0)
-        resp = c1.text_input("Responsável Carga:")
-        if st.form_submit_button("INICIAR PROCESSO"):
+        cli = c1.text_input("Hospital:")
+        p_in = c2.number_input("Peso (kg):", 0.0)
+        maq = c1.selectbox("Lavadora:", ["LAV-01 (20kg)", "LAV-02 (50kg)", "Industrial-01 (100kg)"])
+        resp = c2.text_input("Responsável:")
+        if st.form_submit_button("INICIAR"):
             if cli and resp:
-                t_inicio = agora_bruto()
-                log = f"[{agora()}] Lavagem iniciada por {resp}"
-                # tempos_json guarda o início de cada etapa para cálculo posterior
-                novo = pd.DataFrame([{"id": len(df)+1, "cli": cli.upper(), "p_in": p_in, "p_out": 0.0, 
-                                      "status": "Lavagem", "resp": resp, "detalhes": log, "itens": "", 
-                                      "h_entrada": agora(), "tempos_json": f"Lavagem|{t_inicio}"}])
+                t_inicio = datetime.now().isoformat()
+                novo = pd.DataFrame([{"id": len(df)+1, "cli": cli.upper(), "p_in": p_in, "status": "Lavagem", 
+                                      "resp": resp, "maq": maq, "tempos_json": f"Lavagem|{t_inicio}"}])
                 df = pd.concat([df, novo], ignore_index=True)
-                salvar_dados(df, conexao) ; st.rerun()
+                if conexao: conexao.update(data=df) ; st.cache_data.clear()
+                else: df.to_csv(ARQUIVO_LOCAL, index=False)
+                st.rerun()
 
+# --- 2. OPERAÇÃO ---
 st.write("---")
-
-# --- 2. FILA DE OPERAÇÃO ---
-ativos = df[df['status'] != "Entregue"]
-
-for i, row in ativos.iterrows():
+for i, row in df[df['status'] != "Entregue"].iterrows():
     with st.container(border=True):
-        col_info, col_acao = st.columns([2, 1])
+        st.write(f"**Lote #{row['id']} - {row['cli']}** ({row['p_in']}kg na {row['maq']})")
         
-        with col_info:
-            st.write(f"**Lote #{row['id']} - {row['cli']}**")
-            st.caption(f"📍 Etapa: `{row['status']}` | Responsável: {row['resp']}")
-            st.caption(f"📜 Histórico: {row['detalhes']}")
+        fluxo = ["Lavagem", "Secagem", "Passadeira", "Dobragem", "Contagem", "Entregue"]
+        idx = fluxo.index(row['status'])
+        
+        c1, c2 = st.columns(2)
+        proxima = c1.selectbox("Próxima Etapa:", fluxo[idx+1:], key=f"s{i}")
+        n_resp = c2.text_input("Responsável:", key=f"r{i}")
+        
+        if st.button("✅ Confirmar Mudança", key=f"b{i}"):
+            if n_resp:
+                t_agora = datetime.now().isoformat()
+                df.at[i, 'status'], df.at[i, 'resp'] = proxima, n_resp
+                df.at[i, 'tempos_json'] = str(row['tempos_json']) + f";{proxima}|{t_agora}"
+                if conexao: conexao.update(data=df) ; st.cache_data.clear()
+                else: df.to_csv(ARQUIVO_LOCAL, index=False)
+                st.rerun()
 
-        with col_acao:
-            fluxo = ["Lavagem", "Secagem", "Passadeira", "Dobragem", "Contagem", "Gaiola", "Entregue"]
-            idx = fluxo.index(row['status']) if row['status'] in fluxo else 0
-            
-            if idx < len(fluxo) - 1:
-                proxima = st.selectbox("Próxima Etapa:", fluxo[idx+1:], key=f"sel_{i}")
-                novo_resp = st.text_input("Quem assume?", key=f"res_{i}")
-                
-                # Campos de Inventário (Se for Contagem)
-                if proxima == "Contagem":
-                    t_p = st.text_input("Item:", key=f"tp_{i}")
-                    q_p = st.number_input("Qtd:", 1, key=f"qp_{i}")
-                    if st.button("➕ Add Item", key=f"ba_{i}"):
-                        df.at[i, 'itens'] = str(row['itens']) + f"{t_p}({q_p}); "
-                        salvar_dados(df, conexao) ; st.rerun()
-
-                if st.button("✅ Confirmar Mudança", key=f"conf_{i}"):
-                    if novo_resp:
-                        t_agora = agora_bruto()
-                        # Atualiza log, status e anexa novo marco de tempo
-                        df.at[i, 'status'] = proxima
-                        df.at[i, 'resp'] = novo_resp
-                        df.at[i, 'detalhes'] = str(row['detalhes']) + f" | [{agora()}] {proxima} ({novo_resp})"
-                        df.at[i, 'tempos_json'] = str(row['tempos_json']) + f";{proxima}|{t_agora}"
-                        salvar_dados(df, conexao) ; st.rerun()
-
-# --- 3. RELATÓRIO DE PRODUTIVIDADE (PREVISTO VS REALIZADO) ---
+# --- 3. RELATÓRIO: PROJETADO VS REALIZADO ---
 st.write("---")
-if st.checkbox("📊 Ver Relatório de Produtividade e Tempos"):
-    st.subheader("⏱️ Cronometragem por Lote")
+if st.checkbox("📊 Auditoria: Projetado vs Realizado"):
     for idx, r in df.iterrows():
-        with st.expander(f"Lote {r['id']} - {r['cli']}"):
-            st.write(f"**Itens:** {r['itens']}")
-            # Quebra o texto de tempos para calcular duração
-            etapas_tempo = str(r['tempos_json']).split(";")
-            for j in range(len(etapas_tempo)-1):
-                nome_e, t1 = etapas_tempo[j].split("|")
-                _, t2 = etapas_tempo[j+1].split("|")
+        with st.expander(f"Lote {r['id']} - {r['cli']} ({r['p_in']}kg)"):
+            etapas = str(r['tempos_json']).split(";")
+            for j in range(len(etapas)-1):
+                n_e, t1 = etapas[j].split("|")
+                _, t2 = etapas[j+1].split("|")
                 
-                d1 = datetime.fromisoformat(t1)
-                d2 = datetime.fromisoformat(t2)
-                duracao = int((d2 - d1).total_seconds() / 60)
+                real = int((datetime.fromisoformat(t2) - datetime.fromisoformat(t1)).total_seconds() / 60)
+                proj = calcular_projetado(r['p_in'], n_e)
                 
-                # Exemplo de Comparação Futura:
-                # Se duracao > 30 min e nome_e == "Lavagem": st.error("Atrasado")
-                st.write(f"⏱️ **{nome_e}**: {duracao} minutos")
+                # Alerta visual de produtividade
+                if real > proj:
+                    st.error(f"❌ **{n_e}**: Real {real}min | Projetado {proj}min (**ATRASO**)")
+                else:
+                    st.success(f"✅ **{n_e}**: Real {real}min | Projetado {proj}min (**EFICIENTE**)")
