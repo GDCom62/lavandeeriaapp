@@ -1,101 +1,82 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from datetime import datetime
 
-# Configuração de Layout Amplo
-st.set_page_config(page_title="Lavo e Levo V10 - Rendimento", layout="wide")
+# Configuração de Página
+st.set_page_config(page_title="Lavo e Levo V11 - Custos", layout="wide")
 
-# --- CONEXÃO E DADOS ---
+# --- CONEXÃO COM PLANILHA ---
 from streamlit_gsheets import GSheetsConnection
-try:
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df = conn.read(ttl="0")
-except:
-    st.error("Erro de conexão com a planilha.")
-    st.stop()
+conn = st.connection("gsheets", type=GSheetsConnection)
+df = conn.read(ttl="0")
 
-# --- CÁLCULO DE PROJETADO (DINÂMICO) ---
-MIN_KG_LAVAR = 2.0  # 2 min por kg
-MIN_KG_SECAR = 3.0  # 3 min por kg
+st.title("🧺 LAVANDERIA LAVO E LEVO - GESTÃO DE CUSTOS")
 
-def calcular_performance(peso, tempo_real, etapa):
-    if tempo_real <= 0: return 0
-    # Rendimento Real: Quantos KG a pessoa/máquina processou por hora
-    kg_hora = (peso / tempo_real) * 60
-    return round(kg_hora, 2)
+# --- BARRA LATERAL: CONFIGURAÇÃO DE PREÇOS (INSUMOS) ---
+st.sidebar.header("💰 Configuração de Insumos")
+custo_energia_kg = st.sidebar.number_input("Custo Energia (por kg):", 0.01, 5.0, 0.45)
+custo_agua_kg = st.sidebar.number_input("Custo Água (por kg):", 0.01, 5.0, 0.30)
+custo_quimico_kg = st.sidebar.number_input("Custo Químicos (por kg):", 0.01, 5.0, 0.60)
+custo_fixo_total = custo_energia_kg + custo_agua_kg + custo_quimico_kg
 
-st.title("🧺 LAVANDERIA LAVO E LEVO - GESTÃO DE RENDIMENTO")
+st.sidebar.info(f"Custo Total por KG: R$ {custo_fixo_total:.2f}")
 
-menu = st.tabs(["🚀 Operação", "📈 Dashboards de Rendimento", "⚖️ Auditoria de Pesos"])
+# --- NAVEGAÇÃO POR ABAS ---
+tab_op, tab_dash, tab_custo = st.tabs(["🚀 Operação", "📊 Produtividade", "💵 Custos Industriais"])
 
-# --- ABA 1: OPERAÇÃO (FLUXO COMPLETO) ---
-with menu[0]:
-    with st.expander("➕ Nova Entrada de Lote", expanded=False):
+# --- ABA 1: OPERAÇÃO (Simplificada para velocidade) ---
+with tab_op:
+    with st.expander("➕ Nova Entrada Hospitalar"):
         with st.form("f1"):
             c1, c2 = st.columns(2)
             cli = c1.text_input("Hospital:")
             peso = c2.number_input("Peso (kg):", 0.1)
-            maq = c1.selectbox("Lavadora:", ["LAV-01 (20kg)", "LAV-02 (50kg)", "LAV-03 (100kg)"])
-            resp = c2.text_input("Responsável Carga:")
+            resp = c1.text_input("Responsável:")
             if st.form_submit_button("INICIAR"):
                 t_ini = datetime.now().isoformat()
                 novo = pd.DataFrame([{"id": len(df)+1, "cli": cli.upper(), "p_in": peso, "p_out": 0.0, 
-                                      "status": "Lavagem", "resp": resp, "maq": maq, 
-                                      "tempos_json": f"Lavagem|{t_ini}", "h_in": datetime.now().strftime("%H:%M")}])
+                                      "status": "Lavagem", "resp": resp, "tempos_json": f"Lavagem|{t_ini}"}])
                 df = pd.concat([df, novo], ignore_index=True)
-                conn.update(data=df) ; st.cache_data.clear() ; st.rerun()
+                conn.update(data=df) ; st.rerun()
 
     # Fila Ativa
     for i, row in df[df['status'] != "Entregue"].iterrows():
         with st.container(border=True):
-            col_a, col_b = st.columns([2,1])
+            col_a, col_b = st.columns([3, 1])
             col_a.write(f"**Lote #{row['id']} - {row['cli']}** ({row['p_in']}kg)")
-            col_a.caption(f"Etapa: {row['status']} | Resp: {row['resp']}")
-            
-            prox = col_b.selectbox("Mover para:", ["Secagem", "Passadeira", "Dobragem", "Gaiola", "Entregue"], key=f"s{i}")
-            n_res = col_b.text_input("Quem assume?", key=f"r{i}")
-            
-            if col_b.button("✅ Confirmar", key=f"b{i}"):
-                if n_res:
-                    t_fim = datetime.now().isoformat()
-                    df.at[i, 'status'], df.at[i, 'resp'] = prox, n_res
-                    df.at[i, 'tempos_json'] = str(row['tempos_json']) + f";{prox}|{t_fim}"
-                    conn.update(data=df) ; st.cache_data.clear() ; st.rerun()
+            if col_b.button("Avançar ➡️", key=f"b{i}"):
+                fluxo = ["Lavagem", "Secagem", "Dobragem", "Entregue"]
+                novo_st = fluxo[fluxo.index(row['status']) + 1]
+                t_fim = datetime.now().isoformat()
+                df.at[i, 'status'] = novo_st
+                df.at[i, 'tempos_json'] = str(row['tempos_json']) + f";{novo_st}|{t_fim}"
+                conn.update(data=df) ; st.rerun()
 
-# --- ABA 2: DASHBOARDS (RENDIMENTO KG/HORA) ---
-with menu[1]:
-    st.subheader("📊 Eficiência Industrial (KG / Hora)")
+# --- ABA 3: CUSTOS INDUSTRIAIS ---
+with tab_custo:
+    st.subheader("💹 Demonstrativo de Custos por Lote")
     
     if not df.empty:
-        dados_prod = []
-        for _, r in df.iterrows():
-            etapas = str(r['tempos_json']).split(";")
-            for j in range(len(etapas)-1):
-                n_e, t1 = etapas[j].split("|")
-                _, t2 = etapas[j+1].split("|")
-                minutos = int((datetime.fromisoformat(t2) - datetime.fromisoformat(t1)).total_seconds() / 60)
-                kg_h = calcular_performance(r['p_in'], minutos, n_e)
-                dados_prod.append({"Lote": r['id'], "Etapa": n_e, "Minutos": minutos, "KG_Hora": kg_h, "Colab": r['resp']})
+        # Cálculo de Custos
+        df_custo = df.copy()
+        df_custo['Custo Energia'] = df_custo['p_in'] * custo_energia_kg
+        df_custo['Custo Água'] = df_custo['p_in'] * custo_agua_kg
+        df_custo['Custo Químico'] = df_custo['p_in'] * custo_quimico_kg
+        df_custo['Custo Total Lote'] = df_custo['Custo Energia'] + df_custo['Custo Água'] + df_custo['Custo Químico']
+
+        # Métricas Gerais
+        c1, c2, c3 = st.columns(3)
+        total_gasto = df_custo['Custo Total Lote'].sum()
+        c1.metric("Gasto Total (Hoje)", f"R$ {total_gasto:.2f}")
+        c2.metric("Peso Total Processado", f"{df_custo['p_in'].sum():.1f} kg")
+        c3.metric("Ticket Médio Custo/Lote", f"R$ {(total_gasto/len(df_custo)):.2f}" if len(df_custo)>0 else 0)
+
+        # Tabela de Custos Detalhada
+        st.write("**Detalhamento por Hospital:**")
+        st.dataframe(df_custo[["id", "cli", "p_in", "Custo Energia", "Custo Água", "Custo Químico", "Custo Total Lote"]])
         
-        df_dash = pd.DataFrame(dados_prod)
-
-        if not df_dash.empty:
-            c1, c2 = st.columns(2)
-            
-            # Gráfico 1: Rendimento por Colaborador
-            fig1 = px.bar(df_dash, x="Colab", y="KG_Hora", color="Etapa", 
-                          title="Produtividade: Média de KG processados por Hora", barmode="group")
-            c1.plotly_chart(fig1, use_container_width=True)
-
-            # Gráfico 2: Gargalos por Etapa
-            fig2 = px.line(df_dash, x="Lote", y="Minutos", color="Etapa", markers=True,
-                           title="Tempo de Ciclo por Lote (Minutos)")
-            c2.plotly_chart(fig2, use_container_width=True)
-            
-            st.write("💡 **Dica:** Colaboradores com KG/Hora mais alto são seus 'puxadores' de produção.")
-
-# --- ABA 3: AUDITORIA DE PESO ---
-with menu[2]:
-    st.subheader("⚖️ Conferência de Entrada vs Saída")
-    st.dataframe(df[["id", "cli", "p_in", "p_out", "status", "h_in"]])
+        # Gráfico de Distribuição de Custos
+        st.write("📊 **Proporção de Gastos por Hospital**")
+        st.bar_chart(df_custo.set_index('cli')['Custo Total Lote'])
+    else:
+        st.info("Nenhum lote para calcular custos.")
