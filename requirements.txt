@@ -1,2 +1,2 @@
 pandas
-streamlit
+st-gsheets-connection
