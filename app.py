@@ -2,81 +2,92 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# Configuração de Página
-st.set_page_config(page_title="Lavo e Levo V11 - Custos", layout="wide")
+# Configuração Profissional
+st.set_page_config(page_title="Lavo e Levo V12 - Auditoria", layout="wide")
 
-# --- CONEXÃO COM PLANILHA ---
+# --- CONEXÃO G-SHEETS ---
 from streamlit_gsheets import GSheetsConnection
 conn = st.connection("gsheets", type=GSheetsConnection)
 df = conn.read(ttl="0")
 
-st.title("🧺 LAVANDERIA LAVO E LEVO - GESTÃO DE CUSTOS")
+# --- PARÂMETROS CONTRATUAIS ---
+CUSTO_ALVO_KG = 1.35  # R$ 0,45 + R$ 0,30 + R$ 0,60
+MIN_PROJETADO_KG = 3.0 # Média de 3 min por kg para lavagem+secagem
+LISTA_ROUPAS = ["LENÇOL SOLTEIRO", "LENÇOL CASAL", "FRONHA", "TOALHA BANHO", "TOALHA ROSTO", "PISO", "COBERTOR", "EDREDOM"]
 
-# --- BARRA LATERAL: CONFIGURAÇÃO DE PREÇOS (INSUMOS) ---
-st.sidebar.header("💰 Configuração de Insumos")
-custo_energia_kg = st.sidebar.number_input("Custo Energia (por kg):", 0.01, 5.0, 0.45)
-custo_agua_kg = st.sidebar.number_input("Custo Água (por kg):", 0.01, 5.0, 0.30)
-custo_quimico_kg = st.sidebar.number_input("Custo Químicos (por kg):", 0.01, 5.0, 0.60)
-custo_fixo_total = custo_energia_kg + custo_agua_kg + custo_quimico_kg
+st.title("🧺 LAVANDERIA LAVO E LEVO - V12 (GESTÃO E LOGÍSTICA)")
 
-st.sidebar.info(f"Custo Total por KG: R$ {custo_fixo_total:.2f}")
+tab_op, tab_mot, tab_fin = st.tabs(["🚀 Produção Industrial", "🚚 Conferência Motorista", "💰 Auditoria de Custos"])
 
-# --- NAVEGAÇÃO POR ABAS ---
-tab_op, tab_dash, tab_custo = st.tabs(["🚀 Operação", "📊 Produtividade", "💵 Custos Industriais"])
-
-# --- ABA 1: OPERAÇÃO (Simplificada para velocidade) ---
+# --- ABA 1: PRODUÇÃO ---
 with tab_op:
-    with st.expander("➕ Nova Entrada Hospitalar"):
-        with st.form("f1"):
+    with st.expander("➕ Nova Entrada de Hospital"):
+        with st.form("entrada"):
             c1, c2 = st.columns(2)
             cli = c1.text_input("Hospital:")
             peso = c2.number_input("Peso (kg):", 0.1)
-            resp = c1.text_input("Responsável:")
             if st.form_submit_button("INICIAR"):
                 t_ini = datetime.now().isoformat()
                 novo = pd.DataFrame([{"id": len(df)+1, "cli": cli.upper(), "p_in": peso, "p_out": 0.0, 
-                                      "status": "Lavagem", "resp": resp, "tempos_json": f"Lavagem|{t_ini}"}])
+                                      "status": "Lavagem", "itens": "", "tempos_json": f"Lavagem|{t_ini}"}])
                 df = pd.concat([df, novo], ignore_index=True)
                 conn.update(data=df) ; st.rerun()
 
-    # Fila Ativa
+    # Fila de Trabalho
     for i, row in df[df['status'] != "Entregue"].iterrows():
         with st.container(border=True):
-            col_a, col_b = st.columns([3, 1])
+            col_a, col_b = st.columns([2, 1])
             col_a.write(f"**Lote #{row['id']} - {row['cli']}** ({row['p_in']}kg)")
-            if col_b.button("Avançar ➡️", key=f"b{i}"):
-                fluxo = ["Lavagem", "Secagem", "Dobragem", "Entregue"]
-                novo_st = fluxo[fluxo.index(row['status']) + 1]
+            
+            # Etapa de Contagem (Passadeira/Dobra)
+            if row['status'] in ["Passadeira", "Dobragem"]:
+                st.write("**📦 Contagem Técnica para o Motorista:**")
+                c1, c2, c3 = st.columns([2, 1, 1])
+                item_sel = c1.selectbox("Tipo de Roupa:", LISTA_ROUPAS, key=f"sel_{i}")
+                qtd_sel = c2.number_input("Qtd:", 1, key=f"qtd_{i}")
+                if c3.button("➕ Add", key=f"add_{i}"):
+                    df.at[i, 'itens'] = str(row['itens']) + f"{item_sel}:{qtd_sel}; "
+                    conn.update(data=df) ; st.rerun()
+                st.caption(f"Lista Atual: {row['itens']}")
+
+            # Avançar Etapa
+            if col_b.button(f"➡️ Avançar de {row['status']}", key=f"next_{i}"):
+                fluxo = ["Lavagem", "Secagem", "Passadeira", "Dobragem", "Gaiola", "Entregue"]
+                novo_st = fluxo[fluxo.index(row['status']) + 1] if row['status'] in fluxo else "Entregue"
                 t_fim = datetime.now().isoformat()
                 df.at[i, 'status'] = novo_st
                 df.at[i, 'tempos_json'] = str(row['tempos_json']) + f";{novo_st}|{t_fim}"
                 conn.update(data=df) ; st.rerun()
 
-# --- ABA 3: CUSTOS INDUSTRIAIS ---
-with tab_custo:
-    st.subheader("💹 Demonstrativo de Custos por Lote")
-    
-    if not df.empty:
-        # Cálculo de Custos
-        df_custo = df.copy()
-        df_custo['Custo Energia'] = df_custo['p_in'] * custo_energia_kg
-        df_custo['Custo Água'] = df_custo['p_in'] * custo_agua_kg
-        df_custo['Custo Químico'] = df_custo['p_in'] * custo_quimico_kg
-        df_custo['Custo Total Lote'] = df_custo['Custo Energia'] + df_custo['Custo Água'] + df_custo['Custo Químico']
+# --- ABA 2: MOTORISTA (CONFERÊNCIA) ---
+with tab_mot:
+    st.subheader("🚚 Romaneio de Carga para Motoristas")
+    lotes_prontos = df[df['status'] == "Gaiola"]
+    if lotes_prontos.empty:
+        st.info("Nenhuma gaiola aguardando motorista.")
+    for _, r in lotes_prontos.iterrows():
+        with st.container(border=True):
+            st.write(f"**CLIENTE: {r['cli']}** | Lote: #{r['id']}")
+            st.warning(f"**CONFERIR NA GAIOLA:** {r['itens']}")
+            if st.button(f"Confirmar Carregamento #{r['id']}", key=f"mot_{r['id']}"):
+                df.at[df['id'] == r['id'], 'status'] = "Entregue"
+                conn.update(data=df) ; st.rerun()
 
-        # Métricas Gerais
-        c1, c2, c3 = st.columns(3)
-        total_gasto = df_custo['Custo Total Lote'].sum()
-        c1.metric("Gasto Total (Hoje)", f"R$ {total_gasto:.2f}")
-        c2.metric("Peso Total Processado", f"{df_custo['p_in'].sum():.1f} kg")
-        c3.metric("Ticket Médio Custo/Lote", f"R$ {(total_gasto/len(df_custo)):.2f}" if len(df_custo)>0 else 0)
-
-        # Tabela de Custos Detalhada
-        st.write("**Detalhamento por Hospital:**")
-        st.dataframe(df_custo[["id", "cli", "p_in", "Custo Energia", "Custo Água", "Custo Químico", "Custo Total Lote"]])
-        
-        # Gráfico de Distribuição de Custos
-        st.write("📊 **Proporção de Gastos por Hospital**")
-        st.bar_chart(df_custo.set_index('cli')['Custo Total Lote'])
-    else:
-        st.info("Nenhum lote para calcular custos.")
+# --- ABA 3: AUDITORIA FINANCEIRA ---
+with tab_fin:
+    st.subheader("⚠️ Alerta de Desvio de Custo (Energia)")
+    for _, r in df.iterrows():
+        etapas = str(r['tempos_json']).split(";")
+        if len(etapas) > 1:
+            t1 = datetime.fromisoformat(etapas[0].split("|")[1])
+            t2 = datetime.fromisoformat(etapas[-1].split("|")[1])
+            tempo_real = (t2 - t1).total_seconds() / 60
+            tempo_proj = r['p_in'] * MIN_PROJETADO_KG
+            
+            custo_real = r['p_in'] * CUSTO_ALVO_KG
+            desvio = (tempo_real / tempo_proj) if tempo_proj > 0 else 1
+            
+            if desvio > 1.2: # 20% de atraso = Alerta de prejuízo
+                st.error(f"🔴 Lote {r['id']} ({r['cli']}): Prejuízo Operacional! Tempo Real: {tempo_real:.0f}min (Esperado: {tempo_proj:.0f}min). Custo de Insumos excedido.")
+            else:
+                st.success(f"🟢 Lote {r['id']} ({r['cli']}): Custo dentro do contrato (R$ {CUSTO_ALVO_KG}/kg).")
