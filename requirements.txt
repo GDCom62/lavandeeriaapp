@@ -1,3 +1,2 @@
 pandas
-st-gsheets-connection
-plotly
+streamlit
