@@ -27,8 +27,18 @@ def salvar(novo_df):
 
 st.title("🧺 LAVANDERIA LAVO E LEVO - V5")
 
-# --- 1. ENTRADA E LAVAGEM ---
-with st.expander("➕ 1. RECEBIMENTO / LAVAGEM", expanded=True):
+# --- PAINEL DE METAS DIÁRIAS ---
+st.sidebar.header("🎯 Metas de Produção")
+meta_kg = st.sidebar.number_input("Meta do Dia (kg):", 100, 5000, 500)
+kg_processados = df[df['status'] == 'Entregue']['p_out'].sum()
+progresso = min(float(kg_processados / meta_kg), 1.0)
+
+st.sidebar.metric("Produzido Hoje", f"{kg_processados:.1f} kg")
+st.sidebar.progress(progresso)
+st.sidebar.write(f"Faltam: {max(0.0, meta_kg - kg_processados):.1f} kg")
+
+# --- 1. RECEBIMENTO / LAVAGEM ---
+with st.expander("➕ 1. RECEBIMENTO", expanded=True):
     with st.form("f1", clear_on_submit=True):
         c1, c2 = st.columns(2)
         cli = c1.text_input("Cliente:")
@@ -50,46 +60,56 @@ with st.expander("➕ 1. RECEBIMENTO / LAVAGEM", expanded=True):
 
 st.write("---")
 
-# --- FILA DE TRABALHO ---
+# --- FILA DE TRABALHO ATIVA ---
 ativos = df[df['status'] != "Entregue"]
 for i, row in ativos.iterrows():
     idx = df[df['id'] == row['id']].index
     with st.container(border=True):
         st.write(f"**Lote #{row['id']} - {row['cli']}** | Status: `{row['status']}`")
+        st.caption(f"📜 Histórico: {row['detalhes']}")
         
         if row['status'] == "Lavagem":
-            r2 = st.text_input("Quem leva p/ Secar?", key=f"r2_{i}")
-            if st.button("➡️ Enviar para Secadora", key=f"b2_{i}"):
-                df.at[idx, 'status'], df.at[idx, 'detalhes'] = "Secagem", row['detalhes'] + f" | [{agora()}] Transp: {r2}"
+            r2 = st.text_input("Quem leva p/ Secar?", key=f"r2_{row['id']}")
+            if st.button("➡️ Enviar para Secadora", key=f"b2_{row['id']}"):
+                df.at[idx, 'status'] = "Secagem"
+                df.at[idx, 'detalhes'] = row['detalhes'] + f" | [{agora()}] Transp: {r2}"
                 salvar(df) ; st.rerun()
 
         elif row['status'] == "Secagem":
-            r3 = st.text_input("Quem opera Secadora?", key=f"r3_{i}")
+            r3 = st.text_input("Quem opera Secadora?", key=f"r3_{row['id']}")
             c1, c2 = st.columns(2)
-            if c1.button("👔 Passadeira", key=f"bp_{i}"):
-                df.at[idx, 'status'], df.at[idx, 'detalhes'] = "Passadeira", row['detalhes'] + f" | [{agora()}] Secagem: {r3}"
+            if c1.button("👔 Passadeira", key=f"bp_{row['id']}"):
+                df.at[idx, 'status'] = "Passadeira"
+                df.at[idx, 'detalhes'] = row['detalhes'] + f" | [{agora()}] Secagem: {r3}"
                 salvar(df) ; st.rerun()
-            if c2.button("📦 Dobragem", key=f"bd_{i}"):
-                df.at[idx, 'status'], df.at[idx, 'detalhes'] = "Dobragem", row['detalhes'] + f" | [{agora()}] Secagem: {r3}"
+            if c2.button("📦 Dobragem", key=f"bd_{row['id']}"):
+                df.at[idx, 'status'] = "Dobragem"
+                df.at[idx, 'detalhes'] = row['detalhes'] + f" | [{agora()}] Secagem: {r3}"
                 salvar(df) ; st.rerun()
 
         elif row['status'] in ["Passadeira", "Dobragem"]:
-            r4 = st.text_input("Quem faz contagem?", key=f"r4_{i}")
-            t_p = st.text_input("Peça:", key=f"tp_{i}")
-            q_p = st.number_input("Qtd:", 1, key=f"qp_{i}")
-            if st.button("➕ Add Item", key=f"ba_{i}"):
-                df.at[idx, 'itens'] += f"{t_p}({q_p}); "
+            r4 = st.text_input("Quem faz contagem?", key=f"r4_{row['id']}")
+            t_p = st.text_input("Peça:", key=f"tp_{row['id']}")
+            q_p = st.number_input("Qtd:", 1, key=f"qp_{row['id']}")
+            if st.button("➕ Add Item", key=f"ba_{row['id']}"):
+                df.at[idx, 'itens'] = str(row['itens']) + f"{t_p}({q_p}); "
                 salvar(df) ; st.rerun()
-            if st.button("🎁 Finalizar p/ Gaiola", key=f"bf_{i}"):
-                df.at[idx, 'status'], df.at[idx, 'detalhes'] = "Gaiola", row['detalhes'] + f" | [{agora()}] Acabam: {r4}"
+            if st.button("🎁 Finalizar p/ Gaiola", key=f"bf_{row['id']}"):
+                df.at[idx, 'status'] = "Gaiola"
+                df.at[idx, 'detalhes'] = row['detalhes'] + f" | [{agora()}] Acabam: {r4}"
                 salvar(df) ; st.rerun()
 
         elif row['status'] == "Gaiola":
-            p_out = st.number_input("Peso Saída:", 0.0, key=f"po_{i}")
-            mot = st.selectbox("Motorista:", ["Carlos", "Ricardo", "Fábio"], key=f"m_{i}")
-            if st.button("🚚 LIBERAR", key=f"be_{i}"):
-                df.at[idx, 'status'], df.at[idx, 'p_out'], df.at[idx, 'mot'] = "Entregue", p_out, mot
-                salvar(df) ; st.rerun()
+            p_out = st.number_input("Peso Saída:", 0.0, key=f"po_{row['id']}")
+            gai = st.text_input("Nº Gaiola:", key=f"g_{row['id']}")
+            mot = st.selectbox("Motorista:", ["Carlos", "Ricardo", "Fábio"], key=f"mot_{row['id']}")
+            if st.button("🚚 LIBERAR", key=f"be_{row['id']}"):
+                if p_out > 0:
+                    df.at[idx, 'status'] = "Entregue"
+                    df.at[idx, 'p_out'] = p_out
+                    df.at[idx, 'mot'] = mot
+                    df.at[idx, 'gaiola'] = gai
+                    salvar(df) ; st.rerun()
 
 if st.checkbox("📊 Ver Planilha"):
     st.dataframe(df)
