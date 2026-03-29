@@ -2,77 +2,90 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# 1. Configuração de Página e Estilo Visual (Cores e Botões Grandes)
-st.set_page_config(page_title="Lavo e Levo V20", page_icon="🧺", layout="wide")
+# --- CONFIGURAÇÃO DE APARÊNCIA (DESIGN INDUSTRIAL) ---
+st.set_page_config(page_title="Lavo e Levo V21", page_icon="🧺", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 20px; height: 3.5em; font-weight: bold; border: 2px solid #007bff; }
-    .stExpander { border: 1px solid #007bff; border-radius: 10px; background-color: white; }
-    [data-testid="stMetricValue"] { color: #007bff; }
+    .stButton>button {
+        width: 100%;
+        border-radius: 12px;
+        height: 3.5em;
+        background-color: #007bff;
+        color: white;
+        font-weight: bold;
+        border: none;
+        transition: 0.3s;
+    }
+    .stButton>button:hover { background-color: #0056b3; border: 2px solid white; }
+    .css-1r6slb0 { border: 1px solid #dee2e6; border-radius: 15px; padding: 20px; background-color: #ffffff; }
     </style>
     """, unsafe_allow_html=True)
 
-# 2. Conexão Direta (Blindada)
+# --- CONEXÃO COM BANCO DE DADOS ---
 from streamlit_gsheets import GSheetsConnection
+
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(ttl=0)
-    st.sidebar.success("✅ SISTEMA CONECTADO")
+    st.sidebar.success("✅ BANCO DE DADOS CONECTADO")
 except Exception as e:
-    st.error("❌ ERRO 404: O GOOGLE BLOQUEOU O ACESSO.")
-    st.info("💡 SOLUÇÃO: Na planilha, clique em ARQUIVO -> COMPARTILHAR -> PUBLICAR NA WEB. Depois clique em PUBLICAR.")
+    st.error("❌ ERRO DE ACESSO (404)")
+    st.info("💡 AÇÃO NECESSÁRIA: No Google Sheets, clique em COMPARTILHAR e adicione o e-mail do seu App como EDITOR.")
     st.stop()
 
-# 3. Cabeçalhos e Fluxo
+# Cabeçalhos e Fluxo
+cols_f = ["id", "cli", "p_in", "status", "resp", "detalhes", "itens", "h_entrada"]
 if df is None or df.empty:
-    df = pd.DataFrame(columns=["id", "cli", "p_in", "status", "itens", "data"])
+    df = pd.DataFrame(columns=cols_f)
 
 FLUXO = ["Lavagem", "Secagem", "Passadeira", "Dobragem", "Contagem", "Gaiola", "Entregue"]
 
-st.title("🧺 LAVANDERIA LAVO E LEVO - V20")
+st.title("🧺 LAVANDERIA LAVO E LEVO - V21")
 st.write("---")
 
-# 4. OPERAÇÃO (Design Melhorado)
-col_input, col_fila = st.columns([1, 2])
+# --- INTERFACE DE OPERAÇÃO ---
+col_ent, col_fila = st.columns([1, 2])
 
-with col_input:
-    st.subheader("➕ Novo Lote")
-    with st.form("entrada", clear_on_submit=True):
-        cli = st.text_input("Hospital / Cliente:")
-        peso = st.number_input("Peso (kg):", 0.1)
-        if st.form_submit_button("REGISTRAR ENTRADA"):
-            if cli:
-                novo_id = f"{datetime.now().year}-{len(df)+1:03d}"
-                novo_dado = pd.DataFrame([{"id": novo_id, "cli": cli.upper(), "p_in": peso, "status": "Lavagem", "data": datetime.now().strftime("%H:%M"), "itens": ""}])
-                df = pd.concat([df, novo_dado], ignore_index=True)
+with col_ent:
+    st.subheader("➕ Novo Recebimento")
+    with st.form("nova_entrada", clear_on_submit=True):
+        cliente = st.text_input("Hospital / Cliente:")
+        peso_in = st.number_input("Peso Entrada (kg):", 0.1)
+        equipe = st.text_input("Responsável Lavagem:")
+        if st.form_submit_button("REGISTRAR LOTE"):
+            if cliente and equipe:
+                lote_id = f"{datetime.now().year}-{len(df)+1:03d}"
+                h = datetime.now().strftime("%H:%M")
+                novo = pd.DataFrame([{
+                    "id": lote_id, "cli": cliente.upper(), "p_in": peso_in, "status": "Lavagem",
+                    "resp": equipe, "detalhes": f"[{h}] Lavagem: {equipe}", "itens": "", "h_entrada": h
+                }])
+                df = pd.concat([df, novo], ignore_index=True)
                 conn.update(data=df)
                 st.rerun()
 
 with col_fila:
-    st.subheader("📋 Fila Ativa")
+    st.subheader("📋 Fila de Trabalho Ativa")
     ativos = df[df['status'] != "Entregue"]
     
     for i, row in ativos.iterrows():
-        idx_planilha = df[df['id'] == row['id']].index
-        with st.container(border=True):
-            c1, c2 = st.columns([2, 1])
-            c1.markdown(f"### {row['cli']}")
-            c1.write(f"**Lote:** {row['id']} | **Peso:** {row['p_in']}kg")
-            c1.info(f"📍 Etapa: **{row['status']}**")
+        idx = df[df['id'] == row['id']].index
+        with st.container():
+            st.markdown(f"### {row['cli']} | Lote: {row['id']}")
+            c1, c2, c3 = st.columns([2, 1, 1])
             
-            # Botão de Avanço Estilizado
-            if c2.button(f"➡️ AVANÇAR", key=f"btn_{row['id']}"):
+            c1.write(f"**Etapa:** `{row['status']}` | **Peso:** {row['p_in']}kg")
+            c1.caption(f"🕒 Entrada: {row['h_entrada']} | Responsável: {row['resp']}")
+            
+            # Botão de Avançar com Cor Especial
+            if c2.button(f"➡️ AVANÇAR", key=f"av_{row['id']}"):
                 proxima = FLUXO[FLUXO.index(row['status']) + 1]
-                df.at[idx_planilha, 'status'] = proxima
+                df.at[idx, 'status'] = proxima
+                df.at[idx, 'detalhes'] += f" | [{datetime.now().strftime('%H:%M')}] {proxima}"
                 conn.update(data=df)
                 st.rerun()
-            
-            # Área de Peças (Só aparece no processamento)
-            if row['status'] in ["Passadeira", "Dobragem", "Contagem"]:
-                peca = st.text_input("Peça:", key=f"p_{row['id']}")
-                if st.button("➕ Add", key=f"add_{row['id']}"):
-                    df.at[idx_planilha, 'itens'] = str(row['itens']) + f"{peca}; "
-                    conn.update(data=df)
-                    st.rerun()
+
+            # Opção de Detalhes
+            if c3.button("📝 ITENS", key=f"it_{row['id']}"):
+                st.toast(f"Abrindo contagem do Lote {row['id']}")
