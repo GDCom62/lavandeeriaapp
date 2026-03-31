@@ -79,3 +79,32 @@ with tab3:
                     df.at[i, 'obs'] = obs
                     conn.update(data=df)
                     st.rerun()
+
+# --- LOGICA DE CHECKLIST PARA DOBRAGEM/PASSADEIRA ---
+                if row['status'] in ["Passadeira", "Dobragem"]:
+                    st.markdown("---")
+                    st.caption("📋 Detalhamento do Lote (Checklist)")
+                    
+                    # Criamos colunas para o checklist
+                    c_item1, c_item2, c_item3 = st.columns(3)
+                    
+                    lencois = c_item1.number_input("Lençóis", 0, 500, key=f"lenc_{row['id']}")
+                    fronhas = c_item2.number_input("Fronhas", 0, 500, key=f"fron_{row['id']}")
+                    toalhas = c_item3.number_input("Toalhas", 0, 500, key=f"toal_{row['id']}")
+                    
+                    outros = st.text_input("Outros itens (ex: 5 Aventais)", key=f"out_{row['id']}")
+                    
+                    # Monta a string para salvar na planilha
+                    detalhe_final = f"L:{lencois} | F:{fronhas} | T:{toalhas} | {outros}"
+                    
+                    if st.button(f"Finalizar {row['status']} com Checklist", key=f"save_{row['id']}"):
+                        if op_next: # Verifica se o operador foi preenchido no bloco anterior
+                            df.at[i, 'detalhe_itens'] = detalhe_final
+                            df.at[i, 'status'] = proximo # 'proximo' vem da lógica do fluxo_lista
+                            df.at[i, f'h_{proximo.lower()}'] = datetime.now().isoformat()
+                            conn.update(data=df)
+                            st.success("Checklist Salvo e Lote Movido!")
+                            st.rerun()
+                        else:
+                            st.error("Por favor, preencha o nome do Operador acima.")
+                
