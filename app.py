@@ -34,33 +34,39 @@ ETAPAS_ORDR = ["Aguardando Lavagem", "Lavagem", "Secagem", "Passadeira", "Dobrag
 URL_PLANILHA = "https://google.com"
 
 # 3. Conexão e Dados
-## 3. CONEXÃO REVISADA E BLINDADA
-try:
-    # Tenta conectar usando as credenciais das Secrets
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    # Tenta ler a planilha. Se falhar aqui, o problema é permissão ou link.
-    df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
-    
-    # Se o Google retornar algo que não seja uma tabela, criamos uma vazia
-    if df is None or not isinstance(df, pd.DataFrame):
-        st.error("⚠️ Atenção: A planilha foi encontrada, mas não contém dados válidos.")
-        cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-        df = pd.DataFrame(columns=cols)
-    else:
-        # Garante que todas as colunas existam para não travar o restante do app
-        todas_cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-        for c in todas_cols:
-            if c not in df.columns:
-                df[c] = 0.0 if "p_" in c else ""
-        
-    st.sidebar.success("✅ Conexão com Google Sheets OK!")
+# --- 3. CONEXÃO REVISADA E BLINDADA ---
+@st.cache_resource(ttl=600)  # Faz o app "lembrar" da conexão por 10 min
+def conectar_planilha():
+    try:
+        # Tenta conectar usando os Secrets
+        return st.connection("gsheets", type=GSheetsConnection)
+    except Exception as e:
+        st.error(f"Erro na Instalação da Conexão: {e}")
+        return None
 
-except Exception as e:
-    st.error(f"❌ FALHA NA CONEXÃO: {e}")
-    st.info("💡 DICA: Verifique se o e-mail da Conta de Serviço é EDITOR na sua planilha do Google.")
-    st.stop()
+conn = conectar_planilha()
 
+def buscar_dados():
+    if conn is not None:
+        try:
+            # Força a leitura ignorando o cache se der erro
+            return conn.read(spreadsheet=URL_PLANILHA, ttl="0")
+        except Exception as e:
+            st.warning(f"Erro ao ler dados: {e}. Tentando reconectar...")
+            st.cache_resource.clear() # Limpa a conexão travada
+            return None
+    return None
+
+df = buscar_dados()
+
+# Se o DF vier vazio ou der erro, cria a estrutura básica para o app não travar
+if df is None or not isinstance(df, pd.DataFrame):
+    cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+    df = pd.DataFrame(columns=cols)
+else:
+    # Garante que colunas numéricas não tenham texto/nulos que causam o TypeError
+    df["p_in"] = pd.to_numeric(df["p_in"], errors='coerce').fillna(0.0)
+    df["p_lavagem"] = pd.to_numeric(df["p_lavagem"], errors='coerce').fillna(0.0)
 
 # 4. Interface Principal
 st.title("🧺 SISTEMA INDUSTRIAL LAVO E LEVO - V26")
