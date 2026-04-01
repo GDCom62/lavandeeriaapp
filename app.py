@@ -34,24 +34,33 @@ ETAPAS_ORDR = ["Aguardando Lavagem", "Lavagem", "Secagem", "Passadeira", "Dobrag
 URL_PLANILHA = "https://google.com"
 
 # 3. Conexão e Dados
-# Substitua a parte da CONEXÃO (Seção 3) por esta:
+## 3. CONEXÃO REVISADA E BLINDADA
 try:
+    # Tenta conectar usando as credenciais das Secrets
     conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Tenta ler a planilha. Se falhar aqui, o problema é permissão ou link.
     df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
     
-    # Lista completa de todas as colunas que o sistema usa
-    todas_cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-
-    if df is None or df.empty:
-        df = pd.DataFrame(columns=todas_cols)
+    # Se o Google retornar algo que não seja uma tabela, criamos uma vazia
+    if df is None or not isinstance(df, pd.DataFrame):
+        st.error("⚠️ Atenção: A planilha foi encontrada, mas não contém dados válidos.")
+        cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+        df = pd.DataFrame(columns=cols)
     else:
-        # Cria colunas que por acaso faltarem na planilha para não dar erro
+        # Garante que todas as colunas existam para não travar o restante do app
+        todas_cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
         for c in todas_cols:
             if c not in df.columns:
                 df[c] = 0.0 if "p_" in c else ""
+        
+    st.sidebar.success("✅ Conexão com Google Sheets OK!")
+
 except Exception as e:
-    st.error(f"❌ Erro de Conexão: {e}")
+    st.error(f"❌ FALHA NA CONEXÃO: {e}")
+    st.info("💡 DICA: Verifique se o e-mail da Conta de Serviço é EDITOR na sua planilha do Google.")
     st.stop()
+
 
 # 4. Interface Principal
 st.title("🧺 SISTEMA INDUSTRIAL LAVO E LEVO - V26")
