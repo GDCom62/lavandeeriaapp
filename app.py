@@ -119,34 +119,62 @@ with tab2:
     else:
         st.info("Nenhum lote aguardando lavagem.")
 
-# --- ABA 3: PRODUÇÃO (SALAS 2 E 3) ---
+# --- ABA 3: PRODUÇÃO (SECAGEM -> PASSADEIRA/DOBRAGEM) ---
 with tab3:
-    st.subheader("Processamento Ativo")
+    st.subheader("⚙️ Linha de Produção Ativa")
+    
+    # Filtra lotes que estão em Lavagem, Secagem, Passadeira ou Dobragem
     em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue", "Gaiola"])]
+    
     for i, row in em_fluxo.iterrows():
         with st.container():
             st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1.5, 1, 2])
-            c1.markdown(f"**{row['cli']}**\n\n**Peso Lavado:** {row['p_lavagem']}kg\nOrigem: {row['maq']}")
             
-            ini = datetime.fromisoformat(str(row['etapa_inicio']))
-            minutos = int((datetime.now() - ini).total_seconds() // 60)
-            c2.metric("⏱️ Tempo", f"{minutos} min")
-            c2.write(f"Etapa: `{row['status']}`")
+            # Info do Lote
+            c1.markdown(f"**{row['cli']}** | ID: `{row['id']}`")
+            c1.caption(f"Peso Lavado: {row['p_lavagem']}kg | Origem: {row['maq']}")
+            
+            # Cálculo de Tempo em Tempo Real
+            ini_fase = datetime.fromisoformat(str(row['etapa_inicio']))
+            decorrido = int((datetime.now() - ini_fase).total_seconds() // 60)
+            c2.metric(f"⏱️ Tempo em {row['status']}", f"{decorrido} min")
 
-            idx_f = ETAPAS.index(row['status']) if row['status'] in ETAPAS else 1
-            prox = ETAPAS[idx_f + 1]
+            # LÓGICA DE TRANSIÇÃO DE ETAPAS
             op_f = c3.text_input("Operador Responsável", key=f"op_{row['id']}")
-            det_f = c3.text_input("Lista de Peças", key=f"it_{row['id']}") if row['status'] == "Passadeira/Dobragem" else ""
+            
+            if row['status'] == "Secagem":
+                # Botão para finalizar Secagem e escolher o próximo destino
+                c3.write("📦 **Para onde vai agora?**")
+                col_btn1, col_btn2 = c3.columns(2)
+                
+                if col_btn1.button("🧺 Dobragem", key=f"dob_{row['id']}"):
+                    if op_f:
+                        df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'] = "Dobragem", op_f.upper(), datetime.now().isoformat()
+                        conn.update(data=df); st.cache_data.clear(); st.rerun()
+                    else: st.error("Informe o operador!")
+                    
+                if col_btn2.button("🧣 Passadeira", key=f"pas_{row['id']}"):
+                    if op_f:
+                        df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'] = "Passadeira", op_f.upper(), datetime.now().isoformat()
+                        conn.update(data=df); st.cache_data.clear(); st.rerun()
+                    else: st.error("Informe o operador!")
 
-            if c3.button(f"➡️ Mover para {prox}", key=f"btn_{row['id']}"):
-                if op_f:
-                    df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'] = prox, op_f.upper(), datetime.now().isoformat()
-                    if det_f: df.at[i, 'detalhe_itens'] = det_f
-                    conn.update(data=df)
-                    st.cache_data.clear()
-                    st.rerun()
-                else: st.error("Informe o operador!")
+            else:
+                # Fluxo para as demais etapas (Dobragem, Passadeira, Empacotamento)
+                fluxo_restante = ["Dobragem", "Passadeira", "Empacotamento", "Gaiola"]
+                idx_atual = fluxo_restante.index(row['status']) if row['status'] in fluxo_restante else 0
+                prox = fluxo_restante[idx_atual + 1] if idx_atual + 1 < len(fluxo_restante) else "Gaiola"
+                
+                det_f = c3.text_input("Checklist de Peças", key=f"it_{row['id']}") if row['status'] in ["Dobragem", "Passadeira"] else ""
+
+                if c3.button(f"➡️ Finalizar {row['status']} e Mover para {prox}", key=f"btn_{row['id']}"):
+                    if op_f:
+                        df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'] = prox, op_f.upper(), datetime.now().isoformat()
+                        if det_f: df.at[i, 'detalhe_itens'] = det_f
+                        conn.update(data=df); st.cache_data.clear(); st.rerun()
+                    else: st.error("Informe o operador!")
+            
             st.markdown("</div>", unsafe_allow_html=True)
 
 # --- ABA 4: ADMIN E KPIs ---
