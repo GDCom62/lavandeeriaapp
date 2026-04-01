@@ -24,19 +24,34 @@ MAQUINAS = {
 ETAPAS = ["Lavagem", "Secagem", "Passadeira/Dobragem", "Empacotamento", "Gaiola", "Entregue"]
 URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0HA"
 
-# 3. Conexão
+# 3. Conexão Corrigida
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
-    cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada"]
+    
+    # Lista de colunas que DEVEM ser texto para evitar o erro TypeError
+    cols_texto = ["id", "cli", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada"]
+    # Lista de colunas que DEVEM ser números
+    cols_num = ["p_in", "p_lavagem"]
+
     if df is None or df.empty:
-        df = pd.DataFrame(columns=cols)
-    else:
-        for c in cols:
-            if c not in df.columns: df[c] = 0.0 if "p_" in c else ""
+        df = pd.DataFrame(columns=cols_texto + cols_num)
+    
+    # FORÇAR TIPAGEM: Isso impede o erro de "Invalid value for dtype"
+    for c in cols_texto:
+        if c not in df.columns:
+            df[c] = ""
+        df[c] = df[c].astype(str).replace("nan", "") # Garante que tudo vira texto limpo
+
+    for c in cols_num:
+        if c not in df.columns:
+            df[c] = 0.0
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+
 except Exception as e:
     st.error(f"Erro de Conexão: {e}")
     st.stop()
+
 
 # 4. Interface Principal
 st.title("🧺 SISTEMA INDUSTRIAL LAVO E LEVO - V26")
