@@ -18,7 +18,7 @@ st.title("🧺 SISTEMA LAVANDERIA - V26")
 
 # 2. Conexão com Google Sheets
 # Substitua o link abaixo pelo link da sua planilha se não estiver nas Secrets
-URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0"
 
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
