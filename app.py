@@ -7,8 +7,12 @@ st.set_page_config(page_title="Lavo e Levo V26", layout="wide")
 
 # Conexão
 conn = st.connection("gsheets", type=GSheetsConnection)
-df = conn.read(spreadsheet="https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0", ttl="0")
+# Certifique-se de que o link esteja entre aspas e dentro do parêntese do read
+df = conn.read(
+    spreadsheet="https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0", 
+    ttl="0"
 )
+
 
 # --- INTERFACE ---
 tab1, tab2, tab3 = st.tabs(["📥 Entrada", "🧺 Lavagem (Máquinas)", "🚀 Produção e Fluxo"])
