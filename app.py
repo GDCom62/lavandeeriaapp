@@ -135,65 +135,55 @@ with tab2:
 
 
 # --- ABA 3: PRODUÇÃO ---
-with tab3:
-    st.subheader("Processamento Ativo")
-    em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue", "Gaiola"])]
-    
-    for i, row in em_fluxo.iterrows():
-        with st.container():
-            st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
-            c1, c2, c3 = st.columns([1.5, 1, 2.5])
-            c1.markdown(f"**{row['cli']}** | ID: `{row['id']}`\n\nPeso: {row['p_lavagem']}kg | Origem: {row['maq']}")
-            
-            ini = datetime.fromisoformat(str(row['etapa_inicio']))
-            minutos = int((datetime.now() - ini).total_seconds() // 60)
-            estilo_t = "alerta-tempo" if minutos > 40 else ""
-            c2.markdown(f"Etapa: **{row['status']}**")
-            c2.markdown(f"<span class='{estilo_t}'>⏱️ {minutos} min</span>", unsafe_allow_html=True)
-            
-            if row['status'] == "Lavagem":
-                if c3.button(f"🌀 Ir para SECAGEM", key=f"btn_sec_{row['id']}") and operador_logado:
-                    df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'], df.at[i, 'turno'] = "Secagem", operador_logado, datetime.now().isoformat(), turno_ativo
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
-            
+            # --- CONTINUAÇÃO DA ABA 3 (PRODUÇÃO) ---
             elif row['status'] == "Secagem":
                 col_b1, col_b2 = c3.columns(2)
-                if col_b1.button("🧣 Passadeira", key=f"pas_{row['id']}") and operador_logado:
-                    df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'], df.at[i, 'turno'] = "Passadeira", operador_logado, datetime.now().isoformat(), turno_ativo
+                if col_b1.button("🧣 Ir p/ Passadeira", key=f"pas_{row['id']}"):
+                    df.at[i, 'status'] = "Passadeira"
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    df.at[i, 'resp'] = operador_logado
                     conn.update(data=df); st.cache_data.clear(); st.rerun()
-                if col_b2.button("🧺 Dobragem", key=f"dob_{row['id']}") and operador_logado:
-                    df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'], df.at[i, 'turno'] = "Dobragem", operador_logado, datetime.now().isoformat(), turno_ativo
+                
+                if col_b2.button("🧺 Ir p/ Dobragem", key=f"dob_{row['id']}"):
+                    df.at[i, 'status'] = "Dobragem"
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    df.at[i, 'resp'] = operador_logado
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+
+            elif row['status'] in ["Passadeira", "Dobragem"]:
+                if c3.button(f"🏁 Finalizar e enviar para GAIOLA", key=f"fim_{row['id']}"):
+                    df.at[i, 'status'] = "Gaiola"
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    df.at[i, 'resp'] = operador_logado
                     conn.update(data=df); st.cache_data.clear(); st.rerun()
             
-            else:
-                fluxo_fim = ["Passadeira", "Dobragem", "Empacotamento", "Gaiola"]
-                prox = fluxo_fim[fluxo_fim.index(row['status']) + 1] if row['status'] in fluxo_fim else "Gaiola"
-                det = c3.text_input("Checklist de Peças", key=f"it_{row['id']}") if row['status'] in ["Passadeira", "Dobragem"] else ""
-                if c3.button(f"➡️ Mover para {prox}", key=f"btn_fim_{row['id']}") and operador_logado:
-                    df.at[i, 'status'], df.at[i, 'resp'], df.at[i, 'etapa_inicio'], df.at[i, 'turno'] = prox, operador_logado, datetime.now().isoformat(), turno_ativo
-                    if det: df.at[i, 'detalhe_itens'] = det
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
-# --- ABA 4: ADMIN E RELATÓRIOS ---
+# --- ABA 4: ADMIN / RELATÓRIOS ---
 with tab4:
-    st.subheader("📊 Performance e Turnos")
-    if not df.empty:
-        c_r1, c_r2 = st.columns(2)
-        
-        # Produtividade por Turno
-        prod_turno = df.groupby('turno')['p_lavagem'].sum()
-        c_r1.write("**Kg Processados por Turno:**")
-        c_r1.bar_chart(prod_turno)
-        
-        # Produtividade por Operador
-        prod_op = df.groupby('resp')['p_lavagem'].sum().sort_values(ascending=False)
-        c_r2.write("**Kg Processados por Operador:**")
-        c_r2.bar_chart(prod_op)
-        
+    st.subheader("📊 Painel de Controle e Histórico")
+    
+    # Métricas Rápidas
+    m1, m2, m3 = st.columns(3)
+    total_kg = df['p_in'].sum()
+    em_processo = df[~df['status'].isin(["Gaiola", "Entregue"])].shape[0]
+    finalizados = df[df['status'] == "Gaiola"].shape[0]
+    
+    m1.metric("Total Recebido (kg)", f"{total_kg:.1f} kg")
+    m2.metric("Lotes em Processo", em_processo)
+    m3.metric("Prontos na Gaiola", finalizados)
+
     st.divider()
-    c_adm1, c_adm2 = st.columns(2)
-    if c_adm1.button("🧹 Limpar Entregues"):
-        df = df[df['status'] != "Entregue"]; conn.update(data=df); st.cache_data.clear(); st.rerun()
-    if c_adm2.button("🚨 RESET TOTAL"):
-        df_reset = pd.DataFrame(columns=cols_texto + cols_num); conn.update(data=df_reset); st.cache_data.clear(); st.rerun()
+    
+    # Filtro de Busca
+    busca = st.text_input("🔍 Buscar Cliente ou ID:")
+    df_busca = df[df['cli'].str.contains(busca.upper()) | df['id'].str.contains(busca)] if busca else df
+    
+    st.dataframe(df_busca, use_container_width=True)
+
+    # Botão de Reset (Cuidado!)
+    if st.sidebar.button("🗑️ Limpar Planilha (Backup Recom.)"):
+        if st.sidebar.checkbox("Confirma exclusão de TUDO?"):
+            cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+            df_vazio = pd.DataFrame(columns=cols)
+            conn.update(data=df_vazio); st.cache_data.clear(); st.rerun()
