@@ -34,25 +34,24 @@ ETAPAS_ORDR = ["Aguardando Lavagem", "Lavagem", "Secagem", "Passadeira", "Dobrag
 URL_PLANILHA = "https://google.com"
 
 # 3. Conexão e Dados
+# Substitua a parte da CONEXÃO (Seção 3) por esta:
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
     
-    # Adicionada coluna 'turno' para rastreamento
-    cols_texto = ["id", "cli", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-    cols_num = ["p_in", "p_lavagem"]
+    # Lista completa de todas as colunas que o sistema usa
+    todas_cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
 
     if df is None or df.empty:
-        df = pd.DataFrame(columns=cols_texto + cols_num)
+        df = pd.DataFrame(columns=todas_cols)
     else:
-        for c in cols_texto:
-            if c not in df.columns: df[c] = ""
-            df[c] = df[c].astype(str).replace("nan", "")
-        for c in cols_num:
-            if c not in df.columns: df[c] = 0.0
-            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+        # Cria colunas que por acaso faltarem na planilha para não dar erro
+        for c in todas_cols:
+            if c not in df.columns:
+                df[c] = 0.0 if "p_" in c else ""
 except Exception as e:
-    st.error(f"Erro de Conexão: {e}"); st.stop()
+    st.error(f"❌ Erro de Conexão: {e}")
+    st.stop()
 
 # 4. Interface Principal
 st.title("🧺 SISTEMA INDUSTRIAL LAVO E LEVO - V26")
