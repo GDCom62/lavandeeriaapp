@@ -113,19 +113,29 @@ with tab2:
         if peso_total_carga > limite:
             c2.error(f"⚠️ EXCESSO DE PESO: {peso_total_carga - limite:.1f}kg acima do limite!")
 
-        if st.button("🚀 INICIAR CICLO CONJUNTO"):
+               if st.button("🚀 INICIAR CICLO CONJUNTO"):
             if lotes_lavar and op_lav and peso_total_carga <= limite:
+                # 1. Atualiza o DataFrame na memória
                 for lid, p_val in pesos_informados.items():
                     idx = df[df['id'] == lid].index
                     df.loc[idx, 'status'] = "Secagem"
                     df.loc[idx, 'maq'] = maq_sel
                     df.loc[idx, 'resp'] = op_lav.upper()
-                    df.loc[idx, 'p_lavagem'] = p_val # Salva quanto foi pra máquina
+                    df.loc[idx, 'p_lavagem'] = p_val
                     df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
+                
+                # 2. Grava na Planilha
                 conn.update(data=df)
+                
+                # 3. PULO DO GATO: Limpa o cache para a próxima leitura ser REAL
+                st.cache_data.clear() 
+                
                 st.success(f"Lavagem iniciada com {peso_total_carga}kg total!")
-                time.sleep(1); st.rerun()
-    else:
+                time.sleep(1) 
+                st.rerun()
+            else:
+                st.error("Verifique se selecionou os lotes, o operador e se o peso está no limite!")
+
         st.info("Nenhum lote aguardando lavagem.")
 
 # --- ABA 3: PRODUÇÃO ---
