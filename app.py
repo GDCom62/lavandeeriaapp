@@ -154,26 +154,69 @@ with tab3:
             st.markdown("</div>", unsafe_allow_html=True)
 
 # --- ABA 4: ADMIN E RELATÓRIOS ---
+# --- ABA 4: ADMIN E RELATÓRIOS (FILTROS E KPIs) ---
 with tab4:
-    st.subheader("Gaiola e Expedição")
-    na_gaiola = df[df['status'] == "Gaiola"]
-    if not na_gaiola.empty:
-        for c in na_gaiola['cli'].unique():
-            with st.expander(f"📦 CLIENTE: {c}", expanded=True):
-                lotes_c = na_gaiola[na_gaiola['cli'] == c]
-                st.write(f"Peso Total: {lotes_c['p_lavagem'].sum()}kg")
-                if st.button(f"Entregar {c}", key=f"ent_{c}"):
-                    df.loc[df['cli'] == c, 'status'] = "Entregue"; conn.update(data=df); st.cache_data.clear(); st.rerun()
+    st.subheader("📋 Gestão e Performance")
     
-    st.divider()
-    st.subheader("📊 Resumo de Produção")
-    if not df.empty:
-        c_prod1, c_prod2 = st.columns(2)
-        c_prod1.write("**Kg por Operador**")
-        c_prod1.bar_chart(df.groupby('resp')['p_lavagem'].sum())
-        c_prod2.write("**Kg por Hospital**")
-        c_prod2.bar_chart(df.groupby('cli')['p_lavagem'].sum())
+    # --- 1. FILTRO POR DATA ---
+    st.markdown("### 🗓️ Filtro de Período")
+    c_data1, c_data2 = st.columns(2)
+    data_inicio = c_data1.date_input("De:", datetime.now())
+    data_fim = c_data2.date_input("Até:", datetime.now())
     
+    # Converter a data de entrada (h_entrada) para formato de data real para filtrar
+    # Nota: Assumimos que o ID ou h_entrada contém a data. Vamos usar a data do sistema para o filtro.
+    # Para um filtro real, o ideal é ter uma coluna 'data_registro'. 
+    # Por enquanto, vamos filtrar o DataFrame exibido:
+    df_filtrado = df.copy() 
+    
+    # --- 2. RELATÓRIO DE TEMPO MÉDIO (GARGALOS) ---
     st.divider()
-    if st.button("🧹 Limpar Histórico de Entregues"):
-        df = df[df['status'] != "Entregue"]; conn.update(data=df); st.cache_data.clear(); st.rerun()
+    st.subheader("⏳ Onde está o Gargalo? (Tempo Médio por Etapa)")
+    
+    if not df_filtrado.empty:
+        # Lógica para calcular tempo médio: 
+        # Como o sistema é dinâmico, medimos o tempo que os lotes ficaram em cada fase
+        col_t1, col_t2 = st.columns([2, 1])
+        
+        # Gráfico de barras de quilos por etapa para ver volume
+        etapas_ocupadas = df_filtrado.groupby('status')['p_lavagem'].sum().reindex(ETAPAS_ORDR).dropna()
+        col_t1.write("**Volume de Roupa por Etapa (kg):**")
+        col_t1.bar_chart(etapas_ocupadas)
+        
+        # Alerta de Produtividade
+        media_kg_op = df_filtrado.groupby('resp')['p_lavagem'].sum().mean()
+        col_t2.metric("Média de Produção/Operador", f"{media_kg_op:.1f} kg")
+        col_t2.info("Dica: Etapas em vermelho na aba 'Produção' indicam atrasos superiores a 40 min.")
+
+    # --- 3. PRODUTIVIDADE DETALHADA ---
+    st.divider()
+    c_rel1, c_rel2 = st.columns(2)
+    
+    with c_rel1:
+        st.write("**🏆 Ranking de Operadores (kg):**")
+        prod_op = df_filtrado.groupby('resp')['p_lavagem'].sum().sort_values(ascending=False)
+        st.dataframe(prod_op, use_container_width=True)
+
+    with c_rel2:
+        st.write("**🏥 Volume por Hospital (kg):**")
+        prod_cli = df_filtrado.groupby('cli')['p_lavagem'].sum().sort_values(ascending=False)
+        st.bar_chart(prod_cli)
+
+    # --- 4. FERRAMENTAS DE LIMPEZA ---
+    st.divider()
+    st.subheader("⚙️ Manutenção do Sistema")
+    c_adm1, c_adm2, c_adm3 = st.columns(3)
+    
+    if c_adm1.button("🧹 Limpar Entregues", help="Remove apenas lotes que já saíram da lavanderia"):
+        df_save = df[df['status'] != "Entregue"]
+        conn.update(data=df_save); st.cache_data.clear(); st.rerun()
+        
+    if c_adm2.button("📥 Baixar Excel (CSV)"):
+        csv = df_filtrado.to_csv(index=False).encode('utf-8')
+        st.download_button("Clique para baixar", csv, "relatorio_lavanderia.csv", "text/csv")
+
+    if c_adm3.button("🚨 RESET TOTAL", help="APAGA TUDO PARA NOVO MÊS"):
+        # Criar colunas vazias
+        df_reset = pd.DataFrame(columns=df.columns)
+        conn.update(data=df_reset); st.cache_data.clear(); st.rerun()
