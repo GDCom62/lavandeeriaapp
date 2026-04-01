@@ -3,113 +3,150 @@ import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
 
-st.set_page_config(page_title="Lavo e Levo V26", layout="wide")
+# 1. Configuração de Página
+st.set_page_config(page_title="Lavo e Levo V26", page_icon="🧺", layout="wide")
 
-# Conexão
-conn = st.connection("gsheets", type=GSheetsConnection)
-# Certifique-se de que o link esteja entre aspas e dentro do parêntese do read
-df = conn.read(
-    spreadsheet="https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0", 
-    ttl="0"
-)
+# Estilo Industrial
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; }
+    .status-card { border: 1px solid #ddd; padding: 15px; border-radius: 10px; background-color: #f8f9fa; margin-bottom: 10px; }
+    </style>
+    """, unsafe_allow_html=True)
 
+st.title("🧺 SISTEMA LAVANDERIA - V26")
 
-# --- INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["📥 Entrada", "🧺 Lavagem (Máquinas)", "🚀 Produção e Fluxo"])
+# 2. Conexão com Google Sheets
+# Substitua o link abaixo pelo link da sua planilha se não estiver nas Secrets
+URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
 
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df = conn.read(spreadsheet=URL_PLANILHA, ttl="0")
+    
+    # Garantir que colunas essenciais existam
+    cols_necessarias = ["id", "cli", "p_in", "status", "maquina", "resp", "detalhe_itens", "h_in", "etapa_inicio"]
+    for col in cols_necessarias:
+        if col not in df.columns:
+            df[col] = None
+            
+    st.sidebar.success("✅ Sistema Online")
+except Exception as e:
+    st.error(f"❌ Erro de Conexão: {e}")
+    st.stop()
+
+# 3. Navegação por Abas
+tab1, tab2, tab3, tab4 = st.tabs(["📥 Entrada", "🧼 Lavagem (Máquinas)", "🚀 Fluxo de Produção", "📊 Histórico"])
+
+# --- ABA 1: RECEBIMENTO ---
 with tab1:
-    with st.form("entrada"):
-        st.subheader("Novo Recebimento")
+    with st.form("novo_lote", clear_on_submit=True):
+        st.subheader("Registrar Novo Lote")
         c1, c2 = st.columns(2)
-        cli = c1.text_input("Cliente")
-        peso = c2.number_input("Peso (kg)", 0.1)
-        if st.form_submit_button("Registrar"):
-            novo_id = datetime.now().strftime("%H%M%S")
-            novo = pd.DataFrame([{"id": novo_id, "cli": cli.upper(), "p_in": peso, "status": "Aguardando Lavagem", "h_in": datetime.now().isoformat()}])
-            df = pd.concat([df, novo], ignore_index=True)
-            conn.update(data=df)
-            st.rerun()
+        cliente = c1.text_input("Nome do Hospital / Cliente")
+        peso = c2.number_input("Peso Total (kg)", 0.1)
+        obs_ini = st.text_input("Observação de Entrada")
+        
+        if st.form_submit_button("GERAR LOTE"):
+            if cliente:
+                novo_id = datetime.now().strftime("%d%H%M%S")
+                novo_lote = pd.DataFrame([{
+                    "id": novo_id, 
+                    "cli": cliente.upper(), 
+                    "p_in": peso, 
+                    "status": "Aguardando Lavagem",
+                    "h_in": datetime.now().strftime("%H:%M"),
+                    "etapa_inicio": datetime.now().isoformat(),
+                    "detalhe_itens": obs_ini
+                }])
+                df = pd.concat([df, novo_lote], ignore_index=True)
+                conn.update(data=df)
+                st.success(f"Lote {novo_id} criado!")
+                st.rerun()
 
+# --- ABA 2: MÁQUINAS (LAVAGEM CONJUNTA) ---
 with tab2:
-    st.subheader("🧼 Gestão de Máquinas")
-    # Lotes que estão esperando para entrar na máquina
+    st.subheader("Gestão de Lavadoras")
     espera = df[df['status'] == "Aguardando Lavagem"]
     
     if not espera.empty:
-        lotes_selecionados = st.multiselect("Selecione os lotes para a mesma máquina:", 
-                                            espera['id'].tolist(), 
-                                            format_func=lambda x: f"Lote {x} - {df[df['id']==x]['cli'].values[0]}")
+        c1, c2 = st.columns([2, 1])
+        lotes_selecionados = c1.multiselect(
+            "Selecione os lotes para a mesma máquina:", 
+            espera['id'].tolist(),
+            format_func=lambda x: f"ID {x} - {df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)"
+        )
         
-        num_maquina = st.selectbox("Qual máquina?", ["Máquina 01 (20kg)", "Máquina 02 (20kg)", "Máquina 03 (50kg)"])
-        op_lavagem = st.text_input("Operador de Lavagem")
+        maquina = c2.selectbox("Máquina:", ["MÁQUINA 01", "MÁQUINA 02", "MÁQUINA 03", "MÁQUINA 04"])
+        operador = c2.text_input("Operador da Lavagem", key="op_lav")
 
-        if st.button("Iniciar Lavagem Conjunta"):
-            if lotes_selecionados and op_lavagem:
+        if st.button("🚀 INICIAR LAVAGEM CONJUNTA"):
+            if lotes_selecionados and operador:
                 for lid in lotes_selecionados:
                     idx = df[df['id'] == lid].index
-                    df.at[idx, 'status'] = "Lavando"
-                    df.at[idx, 'maquina'] = num_maquina
-                    df.at[idx, 'resp_lavagem'] = op_lavagem
-                    df.at[idx, 'h_lavagem_inicio'] = datetime.now().isoformat()
+                    df.loc[idx, 'status'] = "Secagem" # Move para a próxima etapa após lavagem
+                    df.loc[idx, 'maquina'] = maquina
+                    df.loc[idx, 'resp'] = operador.upper()
+                    df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
+                
                 conn.update(data=df)
-                st.success("Lavagem Iniciada!")
+                st.balloons()
                 st.rerun()
+            else:
+                st.warning("Selecione os lotes e informe o operador!")
+    else:
+        st.info("Nenhum lote aguardando lavagem.")
 
+# --- ABA 3: FLUXO DE PRODUÇÃO (TIME REAL) ---
 with tab3:
-    st.subheader("🏃 Fluxo de Produção")
-    # Exibe lotes em processo (exceto entrada e entregue)
-    processo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue"])]
+    st.subheader("Acompanhamento de Etapas")
+    # Filtra o que está em processo (exceto entrada e entregue)
+    em_processo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue"])]
     
-    for i, row in processo.iterrows():
-        with st.expander(f"📦 {row['cli']} | {row['status']} | {row.get('maquina', '')}"):
-            c1, c2, c3 = st.columns(3)
+    fluxo_etapas = ["Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
+
+    for i, row in em_processo.iterrows():
+        with st.container():
+            st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
+            col_info, col_tempo, col_acao = st.columns([2, 1, 2])
             
-            # Cálculo de tempo
-            inicio = datetime.fromisoformat(row['h_in'])
-            tempo_total = datetime.now() - inicio
-            c1.metric("Tempo Total", f"{tempo_total.seconds // 60} min")
+            # Info do Lote
+            col_info.markdown(f"**{row['cli']}** (ID: {row['id']})")
+            col_info.caption(f"Status Atual: `{row['status']}` | Máquina: {row.get('maquina', 'N/A')}")
             
-            # Próximo Passo
-            fluxo_lista = ["Lavando", "Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
-            if row['status'] in fluxo_lista:
-                idx = fluxo_lista.index(row['status'])
-                proximo = fluxo_lista[idx + 1] if idx + 1 < len(fluxo_lista) else "Finalizado"
-                
-                op_next = c2.text_input("Próximo Operador", key=f"op_{row['id']}")
-                obs = c3.text_input("Obs/Itens", key=f"obs_{row['id']}")
-                
-                if st.button(f"Mover para {proximo}", key=f"btn_{row['id']}"):
+            # Cronômetro
+            inicio = datetime.fromisoformat(str(row['etapa_inicio']))
+            decorrido = (datetime.now() - inicio).total_seconds() // 60
+            col_tempo.metric("⏱️ Tempo", f"{int(decorrido)} min")
+            
+            # Ação de Avanço
+            idx_atual = fluxo_etapas.index(row['status']) if row['status'] in fluxo_etapas else 0
+            proximo = fluxo_etapas[idx_atual + 1] if idx_atual + 1 < len(fluxo_etapas) else "Entregue"
+            
+            op_resp = col_acao.text_input("Operador", key=f"resp_{row['id']}")
+            
+            # Checklist Especial para Dobragem/Passadeira
+            itens_contagem = ""
+            if row['status'] in ["Passadeira", "Dobragem"]:
+                itens_contagem = col_acao.text_input("Contagem (Ex: 10 Lençóis, 5 Fronhas)", key=f"itens_{row['id']}")
+
+            if col_acao.button(f"➡️ Mover para {proximo}", key=f"btn_{row['id']}"):
+                if op_resp:
                     df.at[i, 'status'] = proximo
-                    df.at[i, f'h_{proximo.lower()}'] = datetime.now().isoformat()
-                    df.at[i, 'obs'] = obs
+                    df.at[i, 'resp'] = op_resp.upper()
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    if itens_contagem:
+                        df.at[i, 'detalhe_itens'] = itens_contagem
+                    
                     conn.update(data=df)
                     st.rerun()
+                else:
+                    st.error("Informe o Operador!")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-# --- LOGICA DE CHECKLIST PARA DOBRAGEM/PASSADEIRA ---
-                if row['status'] in ["Passadeira", "Dobragem"]:
-                    st.markdown("---")
-                    st.caption("📋 Detalhamento do Lote (Checklist)")
-                    
-                    # Criamos colunas para o checklist
-                    c_item1, c_item2, c_item3 = st.columns(3)
-                    
-                    lencois = c_item1.number_input("Lençóis", 0, 500, key=f"lenc_{row['id']}")
-                    fronhas = c_item2.number_input("Fronhas", 0, 500, key=f"fron_{row['id']}")
-                    toalhas = c_item3.number_input("Toalhas", 0, 500, key=f"toal_{row['id']}")
-                    
-                    outros = st.text_input("Outros itens (ex: 5 Aventais)", key=f"out_{row['id']}")
-                    
-                    # Monta a string para salvar na planilha
-                    detalhe_final = f"L:{lencois} | F:{fronhas} | T:{toalhas} | {outros}"
-                    
-                    if st.button(f"Finalizar {row['status']} com Checklist", key=f"save_{row['id']}"):
-                        if op_next: # Verifica se o operador foi preenchido no bloco anterior
-                            df.at[i, 'detalhe_itens'] = detalhe_final
-                            df.at[i, 'status'] = proximo # 'proximo' vem da lógica do fluxo_lista
-                            df.at[i, f'h_{proximo.lower()}'] = datetime.now().isoformat()
-                            conn.update(data=df)
-                            st.success("Checklist Salvo e Lote Movido!")
-                            st.rerun()
-                        else:
-                            st.error("Por favor, preencha o nome do Operador acima.")
-                
+# --- ABA 4: HISTÓRICO ---
+with tab4:
+    st.subheader("Histórico Geral")
+    st.dataframe(df, use_container_width=True)
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button("📥 Baixar Relatório CSV", csv, "lavanderia_v26.csv", "text/csv")
