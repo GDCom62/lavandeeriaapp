@@ -135,55 +135,65 @@ with tab2:
 
 
 # --- ABA 3: PRODUÇÃO ---
-            # --- CONTINUAÇÃO DA ABA 3 (PRODUÇÃO) ---
-            elif row['status'] == "Secagem":
-                col_b1, col_b2 = c3.columns(2)
-                if col_b1.button("🧣 Ir p/ Passadeira", key=f"pas_{row['id']}"):
-                    df.at[i, 'status'] = "Passadeira"
+     # --- ABA 3: PRODUÇÃO (Adicionando o Check-out da Gaiola) ---
+with tab3:
+    # ... (mantenha o código anterior de Lavagem/Secagem/Passadeira) ...
+    
+    st.divider()
+    st.subheader("📦 Prontos na Gaiola (Aguardando Saída)")
+    na_gaiola = df[df['status'] == "Gaiola"]
+    
+    if not na_gaiola.empty:
+        for i, row in na_gaiola.iterrows():
+            with st.expander(f"🚚 SAÍDA: {row['cli']} - {row['p_lavagem']}kg"):
+                c1, c2 = st.columns([3, 1])
+                c1.write(f"ID: {row['id']} | Entrou na Gaiola às: {row['etapa_inicio'][11:16]}")
+                if c2.button("ENTREGAR", key=f"entregar_{row['id']}"):
+                    df.at[i, 'status'] = "Entregue"
                     df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
-                    df.at[i, 'resp'] = operador_logado
                     conn.update(data=df); st.cache_data.clear(); st.rerun()
-                
-                if col_b2.button("🧺 Ir p/ Dobragem", key=f"dob_{row['id']}"):
-                    df.at[i, 'status'] = "Dobragem"
-                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
-                    df.at[i, 'resp'] = operador_logado
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+    else:
+        st.info("Nenhum lote aguardando na Gaiola no momento.")
 
-            elif row['status'] in ["Passadeira", "Dobragem"]:
-                if c3.button(f"🏁 Finalizar e enviar para GAIOLA", key=f"fim_{row['id']}"):
-                    df.at[i, 'status'] = "Gaiola"
-                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
-                    df.at[i, 'resp'] = operador_logado
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
-            
-            st.markdown("</div>", unsafe_allow_html=True)
-
-# --- ABA 4: ADMIN / RELATÓRIOS ---
+# --- ABA 4: ADMIN / RELATÓRIOS (Com Gráficos) ---
 with tab4:
-    st.subheader("📊 Painel de Controle e Histórico")
+    st.subheader("📊 Performance e Indicadores")
     
-    # Métricas Rápidas
-    m1, m2, m3 = st.columns(3)
-    total_kg = df['p_in'].sum()
-    em_processo = df[~df['status'].isin(["Gaiola", "Entregue"])].shape[0]
-    finalizados = df[df['status'] == "Gaiola"].shape[0]
-    
-    m1.metric("Total Recebido (kg)", f"{total_kg:.1f} kg")
-    m2.metric("Lotes em Processo", em_processo)
-    m3.metric("Prontos na Gaiola", finalizados)
+    # Cálculos para os Gráficos
+    if not df.empty:
+        # 1. Gráfico de Kg por Turno
+        # Agrupamos por turno e somamos o peso de entrada
+        prod_turno = df.groupby('turno')['p_in'].sum().reset_index()
+        
+        # 2. Gráfico de Status Atual
+        status_contagem = df['status'].value_counts().reset_index()
+        status_contagem.columns = ['Etapa', 'Qtd Lotes']
+
+        col_graf1, col_graf2 = st.columns(2)
+        
+        with col_graf1:
+            st.markdown("**Produção por Turno (Total kg)**")
+            st.bar_chart(data=prod_turno, x='turno', y='p_in', color="#007bff")
+            
+        with col_graf2:
+            st.markdown("**Distribuição de Lotes por Etapa**")
+            st.bar_chart(data=status_contagem, x='Etapa', y='Qtd Lotes', color="#28a745")
 
     st.divider()
     
-    # Filtro de Busca
-    busca = st.text_input("🔍 Buscar Cliente ou ID:")
-    df_busca = df[df['cli'].str.contains(busca.upper()) | df['id'].str.contains(busca)] if busca else df
-    
-    st.dataframe(df_busca, use_container_width=True)
+    # Histórico Detalhado (Tabela)
+    st.markdown("### 📋 Histórico de Movimentação")
+    st.dataframe(
+        df[['id', 'cli', 'p_in', 'p_lavagem', 'status', 'turno', 'resp', 'maq']], 
+        use_container_width=True,
+        hide_index=True
+    )
 
-    # Botão de Reset (Cuidado!)
-    if st.sidebar.button("🗑️ Limpar Planilha (Backup Recom.)"):
-        if st.sidebar.checkbox("Confirma exclusão de TUDO?"):
-            cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-            df_vazio = pd.DataFrame(columns=cols)
-            conn.update(data=df_vazio); st.cache_data.clear(); st.rerun()
+    # Botão de Exportar para CSV (útil para auditoria)
+    csv = df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Baixar Relatório Completo (CSV)",
+        data=csv,
+        file_name=f"relatorio_lavanderia_{datetime.now().strftime('%d_%m_%Y')}.csv",
+        mime='text/csv',
+    )
