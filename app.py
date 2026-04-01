@@ -70,37 +70,24 @@ with tab1:
                 conn.update(data=df); st.cache_data.clear(); st.rerun()
 
 # --- ABA 2: LAVAGEM FRACIONADA ---
-with tab2:
-    st.subheader("Carregamento de Lavadoras")
-    espera = df[df['status'] == "Aguardando Lavagem"]
-    if not espera.empty:
-        c1, c2 = st.columns([1.5, 1])
-        maq_sel = c1.selectbox("Selecione a Lavadora:", list(MAQUINAS.keys()))
-        limite = float(MAQUINAS[maq_sel])
-        lotes_lavar = c1.multiselect("Selecione os Lotes:", espera['id'].tolist(),
-                                     format_func=lambda x: f"{df[df['id']==x]['cli'].values} ({df[df['id']==x]['p_in'].values}kg)")
-        
-        pesos_informados = {}
-        peso_total_carga = 0.0
         if lotes_lavar:
             for lid in lotes_lavar:
-                p_sugestao = float(df[df['id'] == lid]['p_in'].values)
-                p_real = st.number_input(f"Peso do {df[df['id']==lid]['cli'].values} nesta máquina:", 0.1, p_sugestao, p_sugestao, key=f"p_{lid}")
+                # Localiza a linha do lote específico
+                linha_lote = df[df['id'] == lid]
+                
+                # Extrai o peso e o nome garantindo que pegamos o primeiro valor encontrado (.iloc[0])
+                p_sugestao = float(linha_lote['p_in'].iloc[0])
+                nome_hospital = str(linha_lote['cli'].iloc[0])
+                
+                # Cria o campo de entrada para o peso real na máquina
+                p_real = st.number_input(
+                    f"Peso do {nome_hospital} nesta máquina (kg):", 
+                    0.0, p_sugestao, p_sugestao, 
+                    key=f"p_{lid}"
+                )
                 pesos_informados[lid] = p_real
                 peso_total_carga += p_real
 
-        c2.markdown(f"<div class='metric-container'><h3>Carga: {peso_total_carga:.1f} / {limite}kg</h3></div>", unsafe_allow_html=True)
-        op_lav = c2.text_input("Operador da Lavagem", key="op_lav")
-
-        if st.button("🚀 INICIAR CICLO CONJUNTO"):
-            if lotes_lavar and op_lav and peso_total_carga <= limite:
-                for lid, p_val in pesos_informados.items():
-                    idx = df[df['id'] == lid].index
-                    df.loc[idx, 'status'], df.loc[idx, 'maq'], df.loc[idx, 'resp'] = "Lavagem", maq_sel, op_lav.upper()
-                    df.loc[idx, 'p_lavagem'], df.loc[idx, 'etapa_inicio'] = p_val, datetime.now().isoformat()
-                conn.update(data=df); st.cache_data.clear(); st.rerun()
-            else: st.error("Verifique: Lotes, Operador e Limite de Peso.")
-    else: st.info("Nenhum lote aguardando lavagem.")
 
 # --- ABA 3: PRODUÇÃO (SECAGEM -> ACABAMENTO) ---
 with tab3:
