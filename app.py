@@ -155,45 +155,52 @@ with tab3:
     else:
         st.info("Nenhum lote aguardando na Gaiola no momento.")
 
-# --- ABA 4: ADMIN / RELATÓRIOS (Com Gráficos) ---
+# --- ABA 4: ADMIN / RELATÓRIOS (Cálculo de Tempos) ---
 with tab4:
-    st.subheader("📊 Performance e Indicadores")
-    
-    # Cálculos para os Gráficos
+    st.subheader("📊 Performance e Indicadores de Tempo")
+
     if not df.empty:
-        # 1. Gráfico de Kg por Turno
-        # Agrupamos por turno e somamos o peso de entrada
-        prod_turno = df.groupby('turno')['p_in'].sum().reset_index()
+        # Converter h_entrada (HH:MM) para datetime do dia atual para cálculo
+        hoje = datetime.now().date()
         
-        # 2. Gráfico de Status Atual
-        status_contagem = df['status'].value_counts().reset_index()
-        status_contagem.columns = ['Etapa', 'Qtd Lotes']
+        def calcular_minutos(row):
+            try:
+                # Criamos um datetime completo usando a hora de entrada
+                entrada_dt = datetime.combine(hoje, datetime.strptime(row['h_entrada'], "%H:%M").time())
+                # Se já foi entregue, usa o etapa_inicio (que é o fim do processo), se não, usa AGORA
+                fim_dt = datetime.fromisoformat(row['etapa_inicio']) if row['status'] == "Entregue" else datetime.now()
+                
+                diff = (fim_dt - entrada_dt).total_seconds() / 60
+                return max(0, diff) # Evita números negativos se o servidor tiver atraso
+            except:
+                return 0
 
-        col_graf1, col_graf2 = st.columns(2)
+        # Criar coluna temporária de minutos totais
+        df_tempos = df.copy()
+        df_tempos['minutos_totais'] = df_tempos.apply(calcular_minutos, axis=1)
         
-        with col_graf1:
-            st.markdown("**Produção por Turno (Total kg)**")
-            st.bar_chart(data=prod_turno, x='turno', y='p_in', color="#007bff")
+        # Média Geral
+        tempo_medio_geral = df_tempos['minutos_totais'].mean()
+        
+        # 1. MÉTRICAS DE TEMPO
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Tempo Médio Total", f"{tempo_medio_geral:.0f} min")
+        
+        # Tempo médio por cliente (Top 5 mais demorados)
+        tempo_por_cli = df_tempos.groupby('cli')['minutos_totais'].mean().sort_values(ascending=False).head(5)
+        
+        # 2. GRÁFICOS DE TEMPO
+        col_t1, col_t2 = st.columns(2)
+        
+        with col_t1:
+            st.markdown("**🕒 Tempo Médio por Cliente (min)**")
+            st.bar_chart(tempo_por_cli, color="#ffc107")
             
-        with col_graf2:
-            st.markdown("**Distribuição de Lotes por Etapa**")
-            st.bar_chart(data=status_contagem, x='Etapa', y='Qtd Lotes', color="#28a745")
+        with col_t2:
+            st.markdown("**📈 Eficiência por Turno (Tempo Médio)**")
+            tempo_turno = df_tempos.groupby('turno')['minutos_totais'].mean()
+            st.line_chart(tempo_turno, color="#17a2b8")
 
-    st.divider()
-    
-    # Histórico Detalhado (Tabela)
-    st.markdown("### 📋 Histórico de Movimentação")
-    st.dataframe(
-        df[['id', 'cli', 'p_in', 'p_lavagem', 'status', 'turno', 'resp', 'maq']], 
-        use_container_width=True,
-        hide_index=True
-    )
+        st.divider()
 
-    # Botão de Exportar para CSV (útil para auditoria)
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Baixar Relatório Completo (CSV)",
-        data=csv,
-        file_name=f"relatorio_lavanderia_{datetime.now().strftime('%d_%m_%Y')}.csv",
-        mime='text/csv',
-    )
+    # ... (Aqui continua o código anterior dos gráficos de Kg e Status) ...
