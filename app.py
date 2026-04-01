@@ -17,13 +17,13 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- SIDEBAR: SELEÇÃO DE TURNO ---
-st.sidebar.image("https://flaticon.com", width=100)
+# --- SIDEBAR: SELEÇÃO DE TURNO ---
 st.sidebar.title("👤 Área do Colaborador")
 turno_ativo = st.sidebar.selectbox("Selecione seu Turno:", ["Manhã (07:00 - 15:30)", "Tarde (11:30 - 20:00)"])
 operador_logado = st.sidebar.text_input("Seu Nome (Operador):").upper()
 
 if not operador_logado:
-    st.sidebar.warning("⚠️ Digite seu nome para operar o sistema.")
+    st.sidebar.warning("⚠️ Digite seu nome para operar.")
 
 # 2. Configurações
 MAQUINAS = {
@@ -80,6 +80,7 @@ with tab1:
             else: st.error("Informe seu nome na barra lateral e o cliente!")
 
 # --- ABA 2: LAVAGEM FRACIONADA ---
+# --- ABA 2: LAVAGEM FRACIONADA ---
 with tab2:
     st.subheader("Carregamento de Lavadoras")
     espera = df[df['status'] == "Aguardando Lavagem"]
@@ -87,30 +88,43 @@ with tab2:
         c1, c2 = st.columns([1.5, 1])
         maq_sel = c1.selectbox("Selecione a Lavadora:", list(MAQUINAS.keys()))
         limite = float(MAQUINAS[maq_sel])
-        lotes_lavar = c1.multiselect("Selecione os Hospitais:", espera['id'].tolist(),
-                                     format_func=lambda x: f"{df[df['id']==x]['cli'].iloc[0]} ({df[df['id']==x]['p_in'].iloc[0]}kg)")
+        
+        # Correção aqui: Usamos uma função simples para formatar o nome no seletor
+        lotes_lavar = c1.multiselect(
+            "Selecione os Hospitais:", 
+            espera['id'].tolist(),
+            format_func=lambda x: f"{df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)"
+        )
         
         pesos_informados = {}
         peso_total_carga = 0.0
         if lotes_lavar:
             for lid in lotes_lavar:
                 linha = df[df['id'] == lid]
-                p_sug = float(linha['p_in'].iloc[0])
-                p_real = st.number_input(f"Peso do {linha['cli'].iloc[0]} na máquina:", 0.1, p_sug, p_sug, key=f"p_{lid}")
+                p_sug = float(linha['p_in'].values[0])
+                p_real = st.number_input(f"Peso de {linha['cli'].values[0]} na máquina:", 0.1, p_sug, p_sug, key=f"p_{lid}")
                 pesos_informados[lid] = p_real
                 peso_total_carga += p_real
 
         c2.markdown(f"<div class='metric-container'><h3>Carga: {peso_total_carga:.1f} / {limite}kg</h3></div>", unsafe_allow_html=True)
         
-        if st.button("🚀 INICIAR LAVAGEM") and operador_logado:
-            if lotes_lavar and peso_total_carga <= limite:
-                for lid, p_val in pesos_informados.items():
-                    idx = df[df['id'] == lid].index
-                    df.loc[idx, 'status'], df.loc[idx, 'maq'], df.loc[idx, 'resp'] = "Lavagem", maq_sel, operador_logado
-                    df.loc[idx, 'p_lavagem'], df.loc[idx, 'etapa_inicio'], df.loc[idx, 'turno'] = p_val, datetime.now().isoformat(), turno_ativo
-                conn.update(data=df); st.cache_data.clear(); st.rerun()
-            else: st.error("Verifique os lotes e o peso!")
-    else: st.info("Nenhum lote aguardando lavagem.")
+        if st.button("🚀 INICIAR LAVAGEM"):
+            if lotes_lavar and operador_logado:
+                if peso_total_carga <= limite:
+                    for lid, p_val in pesos_informados.items():
+                        idx = df[df['id'] == lid].index
+                        df.loc[idx, 'status'] = "Lavagem"
+                        df.loc[idx, 'maq'] = maq_sel
+                        df.loc[idx, 'resp'] = operador_logado
+                        df.loc[idx, 'p_lavagem'] = p_val
+                        df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
+                        df.loc[idx, 'turno'] = turno_ativo
+                    conn.update(data=df)
+                    st.cache_data.clear()
+                    st.rerun()
+                else: st.error("Peso acima do limite!")
+            else: st.error("Selecione os lotes e verifique seu nome na barra lateral!")
+
 
 # --- ABA 3: PRODUÇÃO ---
 with tab3:
