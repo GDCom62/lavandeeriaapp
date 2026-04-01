@@ -2,6 +2,336 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from streamlit_gsheets import GSheetsConnection
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
+
+# 1. Configuração de Página (DEVE SER A PRIMEIRA LINHA)
+st.set_page_config(page_title="Lavo e Levo V26", page_icon="🧺", layout="wide")
+
+# Estilo Visual
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; height: 3em; }
+    .status-card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; background-color: #ffffff; margin-bottom: 15px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🧺 SISTEMA LAVANDERIA - V26")
+
+# 2. Conexão com Google Sheets
+# IMPORTANTE: Verifique se este link é o que aparece na barra do navegador (terminando em /edit...)
+URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
+
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Lendo os dados - Usamos ttl=0 para atualização em tempo real
+    df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
+    
+    # Tratamento para o erro de 'Response [200]' ou DataFrame vazio
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        # Cria um DataFrame inicial se a planilha estiver vazia
+        cols = ["id", "cli", "p_in", "status", "maquina", "resp", "detalhe_itens", "h_in", "etapa_inicio"]
+        df = pd.DataFrame(columns=cols)
+    else:
+        # Garante que as colunas necessárias existam no DF carregado
+        cols_necessarias = ["id", "cli", "p_in", "status", "maquina", "resp", "detalhe_itens", "h_in", "etapa_inicio"]
+        for col in cols_necessarias:
+            if col not in df.columns:
+                df[col] = ""
+    
+    # Limpa linhas fantasmas (vazias) do Google Sheets
+    df = df.dropna(subset=['id']) if 'id' in df.columns else df
+
+    st.sidebar.success("✅ Conectado à Planilha")
+except Exception as e:
+    st.error(f"❌ Erro Crítico de Conexão: {e}")
+    st.info("Verifique se as 'Secrets' estão corretas e se a Google Drive API está ativa.")
+    st.stop()
+
+# 3. Navegação
+tab1, tab2, tab3, tab4 = st.tabs(["📥 Entrada", "🧼 Máquinas", "🚀 Produção", "📊 Histórico"])
+
+# --- ABA 1: ENTRADA ---
+with tab1:
+    with st.form("entrada_lote", clear_on_submit=True):
+        st.subheader("Novo Recebimento de Roupa")
+        c1, c2 = st.columns(2)
+        cliente = c1.text_input("Cliente / Hospital")
+        peso = c2.number_input("Peso (kg)", 0.1, 500.0, step=0.1)
+        obs = st.text_input("Observações de Entrada")
+        
+        if st.form_submit_button("REGISTRAR LOTE"):
+            if cliente:
+                novo_id = datetime.now().strftime("%d%H%M%S")
+                novo_row = pd.DataFrame([{
+                    "id": novo_id, 
+                    "cli": cliente.upper(), 
+                    "p_in": peso, 
+                    "status": "Aguardando Lavagem",
+                    "h_in": datetime.now().strftime("%H:%M"),
+                    "etapa_inicio": datetime.now().isoformat(),
+                    "detalhe_itens": obs
+                }])
+                df = pd.concat([df, novo_row], ignore_index=True)
+                conn.update(data=df)
+                st.toast(f"Lote {novo_id} registrado!", icon="✅")
+                st.rerun()
+
+# --- ABA 2: MÁQUINAS (LAVAGEM CONJUNTA) ---
+with tab2:
+    st.subheader("Processo de Lavagem")
+    espera = df[df['status'] == "Aguardando Lavagem"]
+    
+    if not espera.empty:
+        c1, c2 = st.columns([2, 1])
+        lotes_lavar = c1.multiselect(
+            "Selecione os lotes para a mesma máquina:", 
+            espera['id'].tolist(),
+            format_func=lambda x: f"Lote {x} - {df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)"
+        )
+        
+        maq = c2.selectbox("Qual Máquina?", ["LAVADORA 01", "LAVADORA 02", "LAVADORA 03"])
+        operador_lav = c2.text_input("Operador", key="op_lav")
+
+        if st.button("🚀 INICIAR CICLO DE LAVAGEM"):
+            if lotes_lavar and operador_lav:
+                for lid in lotes_lavar:
+                    idx = df[df['id'] == lid].index
+                    df.loc[idx, 'status'] = "Secagem" # Próxima etapa automática
+                    df.loc[idx, 'maquina'] = maq
+                    df.loc[idx, 'resp'] = operador_lav.upper()
+                    df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
+                
+                conn.update(data=df)
+                st.success("Lavagem iniciada!")
+                st.rerun()
+    else:
+        st.info("Nenhum lote na fila de espera.")
+
+# --- ABA 3: PRODUÇÃO (FLUXO) ---
+with tab3:
+    st.subheader("Linha de Produção Ativa")
+    # Mostra tudo que não é entrada nem entrega
+    em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue"])]
+    
+    etapas = ["Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
+
+    for i, row in em_fluxo.iterrows():
+        with st.container():
+            st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1.5, 1, 2])
+            
+            # Coluna 1: Dados do Lote
+            c1.markdown(f"### {row['cli']}\n**ID:** `{row['id']}` | **Peso:** {row['p_in']}kg")
+            c1.caption(f"Máquina: {row.get('maquina', 'N/A')}")
+            
+            # Coluna 2: Tempo na Etapa
+            try:
+                inicio_etapa = datetime.fromisoformat(str(row['etapa_inicio']))
+                minutos = int((datetime.now() - inicio_etapa).total_seconds() // 60)
+                c2.metric("⏱️ Tempo", f"{minutos} min", help=f"Início: {inicio_etapa.strftime('%H:%M')}")
+                c2.write(f"**Etapa:** {row['status']}")
+            except:
+                c2.write("Erro no tempo")
+
+            # Coluna 3: Ação
+            idx_atual = etapas.index(row['status']) if row['status'] in etapas else 0
+            prox_etapa = etapas[idx_atual + 1]
+            
+            op_atual = c3.text_input("Operador Responsável", key=f"op_{row['id']}")
+            
+            # Campo extra para itens (Checklist)
+            detalhe = ""
+            if row['status'] in ["Passadeira", "Dobragem"]:
+                detalhe = c3.text_input("Lista de Itens (ex: 20 Lençóis, 10 Fronhas)", key=f"det_{row['id']}")
+
+            if c3.button(f"Concluir e Mover para {prox_etapa}", key=f"btn_{row['id']}"):
+                if op_atual:
+                    df.at[i, 'status'] = prox_etapa
+                    df.at[i, 'resp'] = op_atual.upper()
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    if detalhe:
+                        df.at[i, 'detalhe_itens'] = detalhe
+                    
+                    conn.update(data=df)
+                    st.rerun()
+                else:
+                    st.error("Informe quem está operando!")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+# --- ABA 4: HISTÓRICO ---
+with tab4:
+    st.subheader("Relatório de Movimentação")
+    st.dataframe(df, use_container_width=True)
+    st.download_button("📥 Exportar Planilha", df.to_csv(index=False).encode('utf-8'), "lavanderia.csv", "text/csv")
+import streamlit as st
+import pandas as pd
+from datetime import datetime
+from streamlit_gsheets import GSheetsConnection
+
+# 1. Configuração de Página (DEVE SER A PRIMEIRA LINHA)
+st.set_page_config(page_title="Lavo e Levo V26", page_icon="🧺", layout="wide")
+
+# Estilo Visual
+st.markdown("""
+    <style>
+    .stButton>button { width: 100%; border-radius: 8px; font-weight: bold; height: 3em; }
+    .status-card { border: 1px solid #ddd; padding: 20px; border-radius: 12px; background-color: #ffffff; margin-bottom: 15px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); }
+    </style>
+    """, unsafe_allow_html=True)
+
+st.title("🧺 SISTEMA LAVANDERIA - V26")
+
+# 2. Conexão com Google Sheets
+# IMPORTANTE: Verifique se este link é o que aparece na barra do navegador (terminando em /edit...)
+URL_PLANILHA = "COLE_AQUI_O_LINK_DA_SUA_PLANILHA"
+
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Lendo os dados - Usamos ttl=0 para atualização em tempo real
+    df = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
+    
+    # Tratamento para o erro de 'Response [200]' ou DataFrame vazio
+    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+        # Cria um DataFrame inicial se a planilha estiver vazia
+        cols = ["id", "cli", "p_in", "status", "maquina", "resp", "detalhe_itens", "h_in", "etapa_inicio"]
+        df = pd.DataFrame(columns=cols)
+    else:
+        # Garante que as colunas necessárias existam no DF carregado
+        cols_necessarias = ["id", "cli", "p_in", "status", "maquina", "resp", "detalhe_itens", "h_in", "etapa_inicio"]
+        for col in cols_necessarias:
+            if col not in df.columns:
+                df[col] = ""
+    
+    # Limpa linhas fantasmas (vazias) do Google Sheets
+    df = df.dropna(subset=['id']) if 'id' in df.columns else df
+
+    st.sidebar.success("✅ Conectado à Planilha")
+except Exception as e:
+    st.error(f"❌ Erro Crítico de Conexão: {e}")
+    st.info("Verifique se as 'Secrets' estão corretas e se a Google Drive API está ativa.")
+    st.stop()
+
+# 3. Navegação
+tab1, tab2, tab3, tab4 = st.tabs(["📥 Entrada", "🧼 Máquinas", "🚀 Produção", "📊 Histórico"])
+
+# --- ABA 1: ENTRADA ---
+with tab1:
+    with st.form("entrada_lote", clear_on_submit=True):
+        st.subheader("Novo Recebimento de Roupa")
+        c1, c2 = st.columns(2)
+        cliente = c1.text_input("Cliente / Hospital")
+        peso = c2.number_input("Peso (kg)", 0.1, 500.0, step=0.1)
+        obs = st.text_input("Observações de Entrada")
+        
+        if st.form_submit_button("REGISTRAR LOTE"):
+            if cliente:
+                novo_id = datetime.now().strftime("%d%H%M%S")
+                novo_row = pd.DataFrame([{
+                    "id": novo_id, 
+                    "cli": cliente.upper(), 
+                    "p_in": peso, 
+                    "status": "Aguardando Lavagem",
+                    "h_in": datetime.now().strftime("%H:%M"),
+                    "etapa_inicio": datetime.now().isoformat(),
+                    "detalhe_itens": obs
+                }])
+                df = pd.concat([df, novo_row], ignore_index=True)
+                conn.update(data=df)
+                st.toast(f"Lote {novo_id} registrado!", icon="✅")
+                st.rerun()
+
+# --- ABA 2: MÁQUINAS (LAVAGEM CONJUNTA) ---
+with tab2:
+    st.subheader("Processo de Lavagem")
+    espera = df[df['status'] == "Aguardando Lavagem"]
+    
+    if not espera.empty:
+        c1, c2 = st.columns([2, 1])
+        lotes_lavar = c1.multiselect(
+            "Selecione os lotes para a mesma máquina:", 
+            espera['id'].tolist(),
+            format_func=lambda x: f"Lote {x} - {df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)"
+        )
+        
+        maq = c2.selectbox("Qual Máquina?", ["LAVADORA 01", "LAVADORA 02", "LAVADORA 03"])
+        operador_lav = c2.text_input("Operador", key="op_lav")
+
+        if st.button("🚀 INICIAR CICLO DE LAVAGEM"):
+            if lotes_lavar and operador_lav:
+                for lid in lotes_lavar:
+                    idx = df[df['id'] == lid].index
+                    df.loc[idx, 'status'] = "Secagem" # Próxima etapa automática
+                    df.loc[idx, 'maquina'] = maq
+                    df.loc[idx, 'resp'] = operador_lav.upper()
+                    df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
+                
+                conn.update(data=df)
+                st.success("Lavagem iniciada!")
+                st.rerun()
+    else:
+        st.info("Nenhum lote na fila de espera.")
+
+# --- ABA 3: PRODUÇÃO (FLUXO) ---
+with tab3:
+    st.subheader("Linha de Produção Ativa")
+    # Mostra tudo que não é entrada nem entrega
+    em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue"])]
+    
+    etapas = ["Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
+
+    for i, row in em_fluxo.iterrows():
+        with st.container():
+            st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1.5, 1, 2])
+            
+            # Coluna 1: Dados do Lote
+            c1.markdown(f"### {row['cli']}\n**ID:** `{row['id']}` | **Peso:** {row['p_in']}kg")
+            c1.caption(f"Máquina: {row.get('maquina', 'N/A')}")
+            
+            # Coluna 2: Tempo na Etapa
+            try:
+                inicio_etapa = datetime.fromisoformat(str(row['etapa_inicio']))
+                minutos = int((datetime.now() - inicio_etapa).total_seconds() // 60)
+                c2.metric("⏱️ Tempo", f"{minutos} min", help=f"Início: {inicio_etapa.strftime('%H:%M')}")
+                c2.write(f"**Etapa:** {row['status']}")
+            except:
+                c2.write("Erro no tempo")
+
+            # Coluna 3: Ação
+            idx_atual = etapas.index(row['status']) if row['status'] in etapas else 0
+            prox_etapa = etapas[idx_atual + 1]
+            
+            op_atual = c3.text_input("Operador Responsável", key=f"op_{row['id']}")
+            
+            # Campo extra para itens (Checklist)
+            detalhe = ""
+            if row['status'] in ["Passadeira", "Dobragem"]:
+                detalhe = c3.text_input("Lista de Itens (ex: 20 Lençóis, 10 Fronhas)", key=f"det_{row['id']}")
+
+            if c3.button(f"Concluir e Mover para {prox_etapa}", key=f"btn_{row['id']}"):
+                if op_atual:
+                    df.at[i, 'status'] = prox_etapa
+                    df.at[i, 'resp'] = op_atual.upper()
+                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                    if detalhe:
+                        df.at[i, 'detalhe_itens'] = detalhe
+                    
+                    conn.update(data=df)
+                    st.rerun()
+                else:
+                    st.error("Informe quem está operando!")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+# --- ABA 4: HISTÓRICO ---
+with tab4:
+    st.subheader("Relatório de Movimentação")
+    st.dataframe(df, use_container_width=True)
+    st.download_button("📥 Exportar Planilha", df.to_csv(index=False).encode('utf-8'), "lavanderia.csv", "text/csv")
 
 # 1. Configuração de Página
 st.set_page_config(page_title="Lavo e Levo V26", page_icon="🧺", layout="wide")
