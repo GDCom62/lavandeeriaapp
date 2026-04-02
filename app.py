@@ -17,7 +17,6 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- SIDEBAR: SELEÇÃO DE TURNO ---
-# --- SIDEBAR: SELEÇÃO DE TURNO ---
 st.sidebar.title("👤 Área do Colaborador")
 turno_ativo = st.sidebar.selectbox("Selecione seu Turno:", ["Manhã (07:00 - 15:30)", "Tarde (11:30 - 20:00)"])
 operador_logado = st.sidebar.text_input("Seu Nome (Operador):").upper()
@@ -30,47 +29,37 @@ MAQUINAS = {
     "LAVADORA 01 (120kg)": 120, "LAVADORA 02 (120kg)": 120,
     "LAVADORA 03 (60kg)": 60, "LAVADORA 04 (50kg)": 50, "LAVADORA 05 (10kg)": 10
 }
-ETAPAS_ORDR = ["Aguardando Lavagem", "Lavagem", "Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
-URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0"
+URL_PLANILHA = "SUA_URL_AQUI" # Certifique-se de usar a URL correta ou ID
 
-# 3. Conexão e Dados
-# --- 3. CONEXÃO REVISADA E BLINDADA ---
-@st.cache_resource(ttl=600)  # Faz o app "lembrar" da conexão por 10 min
-def conectar_planilha():
-    try:
-        # Tenta conectar usando os Secrets
-        return st.connection("gsheets", type=GSheetsConnection)
-    except Exception as e:
-        st.error(f"Erro na Instalação da Conexão: {e}")
-        return None
-
-conn = conectar_planilha()
-
-def buscar_dados():
-    if conn is not None:
-        try:
-            # Força a leitura ignorando o cache se der erro
-            return conn.read(spreadsheet=URL_PLANILHA, ttl="0")
-        except Exception as e:
-            st.warning(f"Erro ao ler dados: {e}. Tentando reconectar...")
-            st.cache_resource.clear() # Limpa a conexão travada
-            return None
-    return None
-
-df = buscar_dados()
-
-# Se o DF vier vazio ou der erro, cria a estrutura básica para o app não travar
-if df is None or not isinstance(df, pd.DataFrame):
-    cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
-    df = pd.DataFrame(columns=cols)
-else:
-    # Garante que colunas numéricas não tenham texto/nulos que causam o TypeError
-    df["p_in"] = pd.to_numeric(df["p_in"], errors='coerce').fillna(0.0)
-    df["p_lavagem"] = pd.to_numeric(df["p_lavagem"], errors='coerce').fillna(0.0)
+# 3. Conexão e Limpeza de Dados (Anti-TypeError)
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_raw = conn.read(spreadsheet=URL_PLANILHA, ttl=0)
+    
+    if df_raw is None or df_raw.empty:
+        cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+        df = pd.DataFrame(columns=cols)
+    else:
+        df = df_raw.copy()
+        # Blindagem contra TypeError: Força colunas de texto a serem strings e números a serem floats
+        cols_texto = ["id", "cli", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+        for col in cols_texto:
+            if col in df.columns:
+                df[col] = df[col].astype(str).replace(['nan', 'None', '0.0', '0', '0.1'], '')
+        
+        cols_num = ["p_in", "p_lavagem"]
+        for col in cols_num:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+                
+    st.sidebar.success("✅ Conexão OK!")
+except Exception as e:
+    st.error(f"❌ Erro de Conexão: {e}")
+    st.stop()
 
 # 4. Interface Principal
 st.title("🧺 SISTEMA INDUSTRIAL LAVO E LEVO - V26")
-tab1, tab2, tab3, tab4 = st.tabs(["📥 1. Recebimento", "🧼 2. Lavagem", "⚙️ 3. Produção", "📊 4. Admin/Relatórios"])
+tab1, tab2, tab3, tab4 = st.tabs(["📥 1. Recebimento", "🧼 2. Lavagem", "⚙️ 3. Produção", "📊 4. Dashboards"])
 
 # --- ABA 1: RECEBIMENTO ---
 with tab1:
@@ -84,16 +73,15 @@ with tab1:
             if cliente and operador_logado:
                 novo_id = datetime.now().strftime("%d%H%M%S")
                 novo = pd.DataFrame([{
-                    "id": novo_id, "cli": cliente.upper(), "p_in": peso_bruto, "p_lavagem": 0.0,
+                    "id": str(novo_id), "cli": cliente.upper(), "p_in": float(peso_bruto), "p_lavagem": 0.0,
                     "status": "Aguardando Lavagem", "h_entrada": datetime.now().strftime("%H:%M"),
                     "etapa_inicio": datetime.now().isoformat(), "detalhe_itens": obs,
-                    "resp": operador_logado, "turno": turno_ativo
+                    "resp": operador_logado, "turno": turno_ativo, "maq": ""
                 }])
                 df = pd.concat([df, novo], ignore_index=True)
                 conn.update(data=df); st.cache_data.clear(); st.rerun()
-            else: st.error("Informe seu nome na barra lateral e o cliente!")
+            else: st.error("Informe o cliente e seu nome!")
 
-# --- ABA 2: LAVAGEM FRACIONADA ---
 # --- ABA 2: LAVAGEM FRACIONADA ---
 with tab2:
     st.subheader("Carregamento de Lavadoras")
@@ -103,9 +91,8 @@ with tab2:
         maq_sel = c1.selectbox("Selecione a Lavadora:", list(MAQUINAS.keys()))
         limite = float(MAQUINAS[maq_sel])
         
-        # Correção aqui: Usamos uma função simples para formatar o nome no seletor
         lotes_lavar = c1.multiselect(
-            "Selecione os Hospitais:", 
+            "Selecione os Lotes:", 
             espera['id'].tolist(),
             format_func=lambda x: f"{df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)"
         )
@@ -116,7 +103,7 @@ with tab2:
             for lid in lotes_lavar:
                 linha = df[df['id'] == lid]
                 p_sug = float(linha['p_in'].values[0])
-                p_real = st.number_input(f"Peso de {linha['cli'].values[0]} na máquina:", 0.1, p_sug, p_sug, key=f"p_{lid}")
+                p_real = st.number_input(f"Peso de {linha['cli'].values[0]} na máquina:", 0.1, p_sug + 50.0, p_sug, key=f"p_{lid}")
                 pesos_informados[lid] = p_real
                 peso_total_carga += p_real
 
@@ -124,89 +111,96 @@ with tab2:
         
         if st.button("🚀 INICIAR LAVAGEM"):
             if lotes_lavar and operador_logado:
-                if peso_total_carga <= limite:
+                if peso_total_carga <= limite + 5: # tolerância de 5kg
                     for lid, p_val in pesos_informados.items():
-                        idx = df[df['id'] == lid].index
+                        idx = df[df['id'] == str(lid)].index
                         df.loc[idx, 'status'] = "Lavagem"
-                        df.loc[idx, 'maq'] = maq_sel
-                        df.loc[idx, 'resp'] = operador_logado
-                        df.loc[idx, 'p_lavagem'] = p_val
+                        df.loc[idx, 'maq'] = str(maq_sel)
+                        df.loc[idx, 'resp'] = str(operador_logado)
+                        df.loc[idx, 'p_lavagem'] = float(p_val)
                         df.loc[idx, 'etapa_inicio'] = datetime.now().isoformat()
-                        df.loc[idx, 'turno'] = turno_ativo
-                    conn.update(data=df)
-                    st.cache_data.clear()
-                    st.rerun()
-                else: st.error("Peso acima do limite!")
-            else: st.error("Selecione os lotes e verifique seu nome na barra lateral!")
-
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+                else: st.error("Peso acima do limite da máquina!")
 
 # --- ABA 3: PRODUÇÃO ---
-     # --- ABA 3: PRODUÇÃO (Adicionando o Check-out da Gaiola) ---
 with tab3:
-    # ... (mantenha o código anterior de Lavagem/Secagem/Passadeira) ...
+    st.subheader("Processamento Ativo")
+    # Filtra tudo que não é entrada e não saiu da fábrica
+    em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue", "Gaiola"])]
     
-    st.divider()
-    st.subheader("📦 Prontos na Gaiola (Aguardando Saída)")
-    na_gaiola = df[df['status'] == "Gaiola"]
-    
-    if not na_gaiola.empty:
-        for i, row in na_gaiola.iterrows():
-            with st.expander(f"🚚 SAÍDA: {row['cli']} - {row['p_lavagem']}kg"):
-                c1, c2 = st.columns([3, 1])
-                c1.write(f"ID: {row['id']} | Entrou na Gaiola às: {row['etapa_inicio'][11:16]}")
-                if c2.button("ENTREGAR", key=f"entregar_{row['id']}"):
-                    df.at[i, 'status'] = "Entregue"
-                    df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
-    else:
-        st.info("Nenhum lote aguardando na Gaiola no momento.")
-
-# --- ABA 4: ADMIN / RELATÓRIOS (Cálculo de Tempos) ---
-with tab4:
-    st.subheader("📊 Performance e Indicadores de Tempo")
-
-    if not df.empty:
-        # Converter h_entrada (HH:MM) para datetime do dia atual para cálculo
-        hoje = datetime.now().date()
-        
-        def calcular_minutos(row):
-            try:
-                # Criamos um datetime completo usando a hora de entrada
-                entrada_dt = datetime.combine(hoje, datetime.strptime(row['h_entrada'], "%H:%M").time())
-                # Se já foi entregue, usa o etapa_inicio (que é o fim do processo), se não, usa AGORA
-                fim_dt = datetime.fromisoformat(row['etapa_inicio']) if row['status'] == "Entregue" else datetime.now()
-                
-                diff = (fim_dt - entrada_dt).total_seconds() / 60
-                return max(0, diff) # Evita números negativos se o servidor tiver atraso
-            except:
-                return 0
-
-        # Criar coluna temporária de minutos totais
-        df_tempos = df.copy()
-        df_tempos['minutos_totais'] = df_tempos.apply(calcular_minutos, axis=1)
-        
-        # Média Geral
-        tempo_medio_geral = df_tempos['minutos_totais'].mean()
-        
-        # 1. MÉTRICAS DE TEMPO
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Tempo Médio Total", f"{tempo_medio_geral:.0f} min")
-        
-        # Tempo médio por cliente (Top 5 mais demorados)
-        tempo_por_cli = df_tempos.groupby('cli')['minutos_totais'].mean().sort_values(ascending=False).head(5)
-        
-        # 2. GRÁFICOS DE TEMPO
-        col_t1, col_t2 = st.columns(2)
-        
-        with col_t1:
-            st.markdown("**🕒 Tempo Médio por Cliente (min)**")
-            st.bar_chart(tempo_por_cli, color="#ffc107")
+    for i, row in em_fluxo.iterrows():
+        with st.container():
+            st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
+            c1, c2, c3 = st.columns([1.5, 1, 2.5])
+            c1.markdown(f"**{row['cli']}** | ID: `{row['id']}`\n\nPeso: {row['p_lavagem']}kg | Maq: {row['maq']}")
             
-        with col_t2:
-            st.markdown("**📈 Eficiência por Turno (Tempo Médio)**")
-            tempo_turno = df_tempos.groupby('turno')['minutos_totais'].mean()
-            st.line_chart(tempo_turno, color="#17a2b8")
+            ini = datetime.fromisoformat(str(row['etapa_inicio']))
+            minutos = int((datetime.now() - ini).total_seconds() // 60)
+            estilo_t = "alerta-tempo" if minutos > 45 else ""
+            c2.markdown(f"Status: **{row['status']}**")
+            c2.markdown(f"<span class='{estilo_t}'>⏱️ {minutos} min nesta etapa</span>", unsafe_allow_html=True)
+            
+            # Lógica de botões por etapa
+            if row['status'] == "Lavagem":
+                if c3.button(f"🌀 Ir para SECAGEM", key=f"btn_sec_{row['id']}"):
+                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Secagem", datetime.now().isoformat()
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+            
+            elif row['status'] == "Secagem":
+                col_b1, col_b2 = c3.columns(2)
+                if col_b1.button("🧣 Passadeira", key=f"p_{row['id']}"):
+                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Passadeira", datetime.now().isoformat()
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+                if col_b2.button("🧺 Dobragem", key=f"d_{row['id']}"):
+                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Dobragem", datetime.now().isoformat()
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+            
+            elif row['status'] in ["Passadeira", "Dobragem"]:
+                if c3.button(f"🏁 Finalizar p/ GAIOLA", key=f"fim_{row['id']}"):
+                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Gaiola", datetime.now().isoformat()
+                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        st.divider()
+    st.divider()
+    st.subheader("📦 Checkout de Gaiola (Saída)")
+    gaiola = df[df['status'] == "Gaiola"]
+    for i, row in gaiola.iterrows():
+        c1, c2, c3 = st.columns([2, 1, 1])
+        c1.info(f"**{row['cli']}** - {row['p_lavagem']}kg")
+        if c2.button("🚚 REGISTRAR ENTREGA", key=f"ent_{row['id']}"):
+            df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Entregue", datetime.now().isoformat()
+            conn.update(data=df); st.cache_data.clear(); st.rerun()
 
-    # ... (Aqui continua o código anterior dos gráficos de Kg e Status) ...
+# --- ABA 4: DASHBOARDS & ADMIN ---
+with tab4:
+    if not df.empty:
+        # Cálculo de Tempo Médio
+        def calc_tempo(row):
+            try:
+                hoje = datetime.now().date()
+                entrada_dt = datetime.combine(hoje, datetime.strptime(row['h_entrada'], "%H:%M").time())
+                fim_dt = datetime.fromisoformat(row['etapa_inicio']) if row['status'] == "Entregue" else datetime.now()
+                return max(0, (fim_dt - entrada_dt).total_seconds() / 60)
+            except: return 0
+
+        df_aux = df.copy()
+        df_aux['min_total'] = df_aux.apply(calc_tempo, axis=1)
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Tempo Médio Fábrica", f"{df_aux['min_total'].mean():.0f} min")
+        m2.metric("Total Processado", f"{df['p_in'].sum():.1f} kg")
+        m3.metric("Lotes na Gaiola", len(df[df['status'] == "Gaiola"]))
+
+        st.markdown("### 📈 Produtividade por Turno (kg)")
+        prod_turno = df.groupby('turno')['p_in'].sum()
+        st.bar_chart(prod_turno)
+        
+        st.markdown("### 📋 Histórico Geral")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.info("Sem dados para exibir relatórios.")
+
+    if st.sidebar.button("🗑️ Resetar Sistema"):
+        if st.sidebar.checkbox("Confirmar exclusão?"):
+            cols = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
+            conn.update(data=pd.DataFrame(columns=cols)); st.cache_data.clear(); st.rerun()
