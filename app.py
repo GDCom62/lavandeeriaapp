@@ -31,7 +31,7 @@ MAQUINAS = {
     "LAVADORA 03 (60kg)": 60, "LAVADORA 04 (50kg)": 50, "LAVADORA 05 (10kg)": 10
 }
 ETAPAS_ORDR = ["Aguardando Lavagem", "Lavagem", "Secagem", "Passadeira", "Dobragem", "Empacotamento", "Gaiola", "Entregue"]
-URL_PLANILHA = "https://google.com"
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0"
 
 # 3. Conexão e Dados
 # --- 3. CONEXÃO REVISADA E BLINDADA ---
