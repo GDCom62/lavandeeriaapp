@@ -123,37 +123,76 @@ with tab2:
                 else: st.error("Peso acima do limite da máquina!")
 
 # --- ABA 3: PRODUÇÃO ---
+# --- ABA 3: PRODUÇÃO COM REVERSÃO E QUANTIDADES ---
 with tab3:
-    st.subheader("Processamento Ativo")
-    # Filtra tudo que não é entrada e não saiu da fábrica
+    st.subheader("⚙️ Processamento Ativo")
+    
+    # Filtra lotes que estão em Lavagem, Secagem, Passadeira ou Dobragem
     em_fluxo = df[~df['status'].isin(["Aguardando Lavagem", "Entregue", "Gaiola"])]
+    
+    if em_fluxo.empty:
+        st.info("Nenhum lote em processamento no momento.")
     
     for i, row in em_fluxo.iterrows():
         with st.container():
             st.markdown(f"<div class='status-card'>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1.5, 1, 2.5])
-            c1.markdown(f"**{row['cli']}** | ID: `{row['id']}`\n\nPeso: {row['p_lavagem']}kg | Maq: {row['maq']}")
             
+            # ⏱️ CÁLCULO DO CRONÔMETRO
             ini = datetime.fromisoformat(str(row['etapa_inicio']))
             minutos = int((datetime.now() - ini).total_seconds() // 60)
-            estilo_t = "alerta-tempo" if minutos > 45 else ""
-            c2.markdown(f"Status: **{row['status']}**")
-            c2.markdown(f"<span class='{estilo_t}'>⏱️ {minutos} min nesta etapa</span>", unsafe_allow_html=True)
+            estilo_t = "alerta-tempo" if minutos > 40 else ""
             
-            # Lógica de botões por etapa
+            # Coluna 1: Info do Cliente
+            c1.markdown(f"**{row['cli']}** | ID: `{row['id']}`")
+            c1.caption(f"Entrada: {row['h_entrada']} | Peso: {row['p_lavagem']}kg")
+            if row['detalhe_itens']:
+                c1.markdown(f"📝 *{row['detalhe_itens']}*")
+
+            # Coluna 2: Status e Tempo
+            c2.markdown(f"Etapa: **{row['status']}**")
+            c2.markdown(f"<span class='{estilo_t}'>⏱️ {minutos} min</span>", unsafe_allow_html=True)
+            
+            # --- BOTÃO DE DESFAZER (REVERTER) ---
+            if c2.button("↩️ Reverter", key=f"rev_{row['id']}", help="Volta para a etapa anterior"):
+                status_atual = row['status']
+                mapa_reversao = {
+                    "Lavagem": "Aguardando Lavagem",
+                    "Secagem": "Lavagem",
+                    "Passadeira": "Secagem",
+                    "Dobragem": "Secagem"
+                }
+                df.at[i, 'status'] = mapa_reversao.get(status_atual, status_atual)
+                df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                conn.update(data=df); st.cache_data.clear(); st.rerun()
+
+            # Coluna 3: Ações e Relatório de Peças
             if row['status'] == "Lavagem":
-                if c3.button(f"🌀 Ir para SECAGEM", key=f"btn_sec_{row['id']}"):
+                if c3.button(f"🌀 Ir para SECAGEM", key=f"sec_{row['id']}"):
                     df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Secagem", datetime.now().isoformat()
                     conn.update(data=df); st.cache_data.clear(); st.rerun()
             
             elif row['status'] == "Secagem":
-                col_b1, col_b2 = c3.columns(2)
-                if col_b1.button("🧣 Passadeira", key=f"p_{row['id']}"):
-                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Passadeira", datetime.now().isoformat()
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
-                if col_b2.button("🧺 Dobragem", key=f"d_{row['id']}"):
-                    df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Dobragem", datetime.now().isoformat()
-                    conn.update(data=df); st.cache_data.clear(); st.rerun()
+                # LISTA PARA RELATAR QUANTIDADE
+                with c3.expander("📊 Relatar Peças para Passadeira/Dobra"):
+                    col_p1, col_p2 = st.columns(2)
+                    q1 = col_p1.number_input("Lençóis", 0, 500, key=f"l_{row['id']}")
+                    q2 = col_p1.number_input("Fronhas", 0, 500, key=f"f_{row['id']}")
+                    q3 = col_p2.number_input("Toalhas", 0, 500, key=f"t_{row['id']}")
+                    q4 = col_p2.number_input("Outros", 0, 500, key=f"o_{row['id']}")
+                    
+                    resumo = f"Lencol: {q1} | Fronha: {q2} | Toalha: {q3} | Outros: {q4}"
+                    
+                    st.divider()
+                    b1, b2 = st.columns(2)
+                    if b1.button("🧣 Passadeira", key=f"pas_{row['id']}"):
+                        df.at[i, 'status'], df.at[i, 'detalhe_itens'] = "Passadeira", resumo
+                        df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                        conn.update(data=df); st.cache_data.clear(); st.rerun()
+                    if b2.button("🧺 Dobragem", key=f"dob_{row['id']}"):
+                        df.at[i, 'status'], df.at[i, 'detalhe_itens'] = "Dobragem", resumo
+                        df.at[i, 'etapa_inicio'] = datetime.now().isoformat()
+                        conn.update(data=df); st.cache_data.clear(); st.rerun()
             
             elif row['status'] in ["Passadeira", "Dobragem"]:
                 if c3.button(f"🏁 Finalizar p/ GAIOLA", key=f"fim_{row['id']}"):
@@ -161,15 +200,16 @@ with tab3:
                     conn.update(data=df); st.cache_data.clear(); st.rerun()
             st.markdown("</div>", unsafe_allow_html=True)
 
+    # CHECKOUT DA GAIOLA (Para lotes que já saíram do fluxo acima)
     st.divider()
-    st.subheader("📦 Checkout de Gaiola (Saída)")
+    st.subheader("📦 Checkout de Gaiola")
     gaiola = df[df['status'] == "Gaiola"]
     for i, row in gaiola.iterrows():
-        c1, c2, c3 = st.columns([2, 1, 1])
-        c1.info(f"**{row['cli']}** - {row['p_lavagem']}kg")
-        if c2.button("🚚 REGISTRAR ENTREGA", key=f"ent_{row['id']}"):
-            df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Entregue", datetime.now().isoformat()
-            conn.update(data=df); st.cache_data.clear(); st.rerun()
+        with st.expander(f"🚚 SAÍDA: {row['cli']} ({row['p_lavagem']}kg)"):
+            st.write(f"Resumo: {row['detalhe_itens']}")
+            if st.button("CONFIRMAR ENTREGA", key=f"ent_{row['id']}"):
+                df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Entregue", datetime.now().isoformat()
+                conn.update(data=df); st.cache_data.clear(); st.rerun()
 
 # --- ABA 4: DASHBOARDS & ADMIN ---
 with tab4:
