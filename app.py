@@ -29,7 +29,7 @@ MAQUINAS = {
     "LAVADORA 01 (120kg)": 120, "LAVADORA 02 (120kg)": 120,
     "LAVADORA 03 (60kg)": 60, "LAVADORA 04 (50kg)": 50, "LAVADORA 05 (10kg)": 10
 }
-URL_PLANILHA = "SUA_URL_AQUI" # Certifique-se de usar a URL correta ou ID
+URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0" # Certifique-se de usar a URL correta ou ID
 
 # 3. Conexão e Limpeza de Dados (Anti-TypeError)
 try:
