@@ -8,7 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
 # 1. CONFIGURAÇÃO DE PÁGINA
-st.set_page_config(page_title="Lavo e Levo V28 - Estável", page_icon="🧺", layout="wide")
+st.set_page_config(page_title="Lavo e Levo V29 - Estável", page_icon="🧺", layout="wide")
 
 st.markdown("""
     <style>
@@ -33,34 +33,35 @@ URL_PLANILHA = f"https://docs.google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9
 def gerar_romaneio_pdf(row):
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=A4)
-    h = A4[1]
+    h = A4
     p.setFont("Helvetica-Bold", 16); p.drawString(100, h - 50, "ROMANEIO DE ENTREGA - LAVO E LEVO")
     p.setFont("Helvetica", 10); p.drawString(100, h - 70, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     p.setFont("Helvetica-Bold", 12); p.drawString(100, h - 100, f"CLIENTE: {row['cli']}")
     p.setFont("Helvetica", 11); p.drawString(100, h - 120, f"Gaiola: {row['maq']} | ID: {row['id']}")
     p.rect(100, h - 180, 400, 40); p.drawString(110, h - 160, f"PESO ENTRADA: {row['p_in']} kg"); p.drawString(110, h - 175, f"PESO SAÍDA: {row['p_lavagem']} kg")
     y = h - 220
-    for item in str(row['detalhe_itens']).split(','): p.drawString(120, y, f"• {item.strip()}"); y -= 20
+    for item in str(row['detalhe_itens']).split(','): p.drawString(120, y, f"• {item.strip()} \n"); y -= 20
     p.showPage(); p.save(); buffer.seek(0)
     return buffer
 
-# --- 3. CONEXÃO E DADOS (CORRIGIDO PARA EVITAR RECURSIONERROR) ---
-# A conexão NÃO pode ficar dentro do cache_data
+# --- 3. CONEXÃO E DADOS (ANTI-KEYERROR E ANTI-RECURSION) ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-@st.cache_data(ttl=20) # Cache apenas dos dados (Dataframe)
+@st.cache_data(ttl=15)
 def carregar_tabela(url):
+    cols_padrao = ["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]
     try:
-        # Lê direto via pandas para economizar cota e evitar recursão
         df_lido = pd.read_csv(url)
-        # Limpeza básica
-        for c in ["id", "cli", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"]:
+        if df_lido.empty or "status" not in df_lido.columns:
+            return pd.DataFrame(columns=cols_padrao)
+        for c in cols_padrao:
             if c in df_lido.columns: df_lido[c] = df_lido[c].astype(str).replace(['nan', 'None'], '')
-        for n in ["p_in", "p_lavagem"]:
-            if n in df_lido.columns: df_lido[n] = pd.to_numeric(df_lido[n], errors='coerce').fillna(0.0)
+            else: df_lido[c] = ""
+        df_lido["p_in"] = pd.to_numeric(df_lido["p_in"], errors='coerce').fillna(0.0)
+        df_lido["p_lavagem"] = pd.to_numeric(df_lido["p_lavagem"], errors='coerce').fillna(0.0)
         return df_lido
     except:
-        return pd.DataFrame(columns=["id", "cli", "p_in", "p_lavagem", "status", "maq", "resp", "detalhe_itens", "etapa_inicio", "h_entrada", "turno"])
+        return pd.DataFrame(columns=cols_padrao)
 
 df = carregar_tabela(URL_PLANILHA)
 
@@ -96,12 +97,12 @@ with tab2:
             conn.update(data=df); st.cache_data.clear(); st.rerun()
 
 with tab3:
+    st.subheader("⚙️ Produção Ativa")
     ativos = df[~df['status'].isin(["Aguardando Lavagem", "Entregue", "Gaiola"])]
     for i, row in ativos.iterrows():
         ini = datetime.fromisoformat(str(row['etapa_inicio']))
         minutos = int((datetime.now() - ini).total_seconds() // 60)
         cor = "card-verde" if minutos <= 30 else "card-amarelo" if minutos <= 60 else "card-vermelho"
-        
         with st.container():
             st.markdown(f"<div class='status-card {cor}'>", unsafe_allow_html=True)
             c1, c2, c3 = st.columns([1.5, 1, 2.5])
@@ -111,7 +112,6 @@ with tab3:
                 mapa = {"Lavagem":"Aguardando Lavagem", "Secagem":"Lavagem", "Passadeira":"Secagem", "Dobragem":"Secagem"}
                 df.at[i, 'status'] = mapa.get(row['status'], row['status'])
                 conn.update(data=df); st.cache_data.clear(); st.rerun()
-            
             if row['status'] == "Lavagem":
                 if c3.button("🌀 Ir p/ Secagem", key=f"s_{row['id']}"):
                     df.at[i, 'status'], df.at[i, 'etapa_inicio'] = "Secagem", datetime.now().isoformat()
@@ -144,8 +144,22 @@ with tab3:
                 conn.update(data=df); st.cache_data.clear(); st.rerun()
 
 with tab4:
-    st.subheader("📊 Relatórios")
-    df_fin = df[df['status'].isin(["Gaiola", "Entregue"])].copy()
-    if not df_fin.empty:
-        df_fin['Variação'] = df_fin['p_lavagem'] - df_fin['p_in']
-        st.dataframe(df_fin[['cli', 'p_in', 'p_lavagem', 'Variação', 'maq']], use_container_width=True)
+    st.subheader("📊 Relatórios e Ocupação")
+    if not df.empty:
+        # Gráfico de Pizza: Ocupação das Máquinas (Peso Lavado no Dia)
+        df_lavado = df[df['status'].isin(["Secagem", "Passadeira", "Dobragem", "Gaiola", "Entregue"])]
+        if not df_lavado.empty:
+            st.write("### Ocupação das Lavadoras (Peso Processado)")
+            pizza_data = df_lavado.groupby('maq')['p_in'].sum().reset_index()
+            # Filtra apenas máquinas reais (remove Gaiolas do gráfico)
+            pizza_data = pizza_data[pizza_data['maq'].str.contains("LAVADORA")]
+            st.plotly_chart({
+                "data": [{"labels": pizza_data['maq'], "values": pizza_data['p_in'], "type": "pie", "hole": .4}],
+                "layout": {"title": "Distribuição de Carga por Máquina (kg)"}
+            })
+        
+        df_fin = df[df['status'].isin(["Gaiola", "Entregue"])].copy()
+        if not df_fin.empty:
+            df_fin['Quebra %'] = ((df_fin['p_lavagem'] - df_fin['p_in']) / df_fin['p_in']) * 100
+            st.write("### Histórico de Pesagem (Entrada vs Saída)")
+            st.dataframe(df_fin[['cli', 'p_in', 'p_lavagem', 'Quebra %', 'maq']], use_container_width=True)
