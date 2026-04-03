@@ -58,7 +58,18 @@ if st.sidebar.button("🔄 Sincronizar Dados (Limpar Erro 429)"):
 # 2. CONEXÃO E URL (ECONOMIA DE COTA)
 URL_ID = "1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ"
 URL_PLANILHA = f"https://google.com/spreadsheets/d/1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ/edit?pli=1&gid=0#gid=0/export?format=csv"
+# 2. CONFIGURAÇÕES E URL
+MAQUINAS = {
+    "LAVADORA 01 (120kg)": 120, 
+    "LAVADORA 02 (120kg)": 120,
+    "LAVADORA 03 (60kg)": 60, 
+    "LAVADORA 04 (50kg)": 50, 
+    "LAVADORA 05 (10kg)": 10
+}
 
+# Use o ID da sua planilha aqui
+URL_ID = "1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ"
+URL_PLANILHA = f"https://google.com{URL_ID}/export?format=csv
 @st.cache_data(ttl=30) # Cache de 30s para não estourar a cota do Google
 def carregar_dados():
     try:
