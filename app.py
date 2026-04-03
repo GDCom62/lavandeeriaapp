@@ -30,11 +30,7 @@ MAQUINAS = {
 
 # ID da sua planilha Google
 URL_ID = "1omLRgifWEqgU9_EsQRAqKm9ZY0Lw2jeaxmLP-KkCVmQ"
-URL_PLANILHA = f"https://google.com/streamlit
-st-gsheets-connection
-pandas
-reportlab
-/export?format=csv"
+URL_PLANILHA = f"https://docs.google.comstreamlitst-gsheets-connectionpandasreportlab/export?format=csv"
 
 # --- FUNÇÃO PARA GERAR O ROMANEIO PDF ---
 def gerar_romaneio_pdf(row):
