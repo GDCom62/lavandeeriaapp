@@ -1,6 +1,4 @@
-[tidb]
-host = "://tidbcloud.com"
-port = 4000
-database = "lavoelevo"
-user = "seu_usuario"
-password = "sua_password"
+pymysql
+pandas
+reportlab
+plotly
