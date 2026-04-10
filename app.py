@@ -1,24 +1,23 @@
 import streamlit as st
 import pandas as pd
-import mysql.connector
+import pymysql
 from datetime import datetime
-import io
 import time
 
 # --- 1. CONFIGURAÇÃO DE PÁGINA ---
 st.set_page_config(page_title="Lavo e Levo V31 - TiDB", layout="wide")
 
-# --- 2. CONEXÃO COM O BANCO TIDB ---
-# Os dados devem estar no .streamlit/secrets.toml ou nas configurações do Streamlit Cloud
+# --- 2. CONEXÃO COM O BANCO TIDB (USANDO PYMYSQL) ---
 def get_db_connection():
     try:
-        return mysql.connector.connect(
+        return pymysql.connect(
             host=st.secrets["tidb"]["host"],
             port=st.secrets["tidb"]["port"],
             user=st.secrets["tidb"]["user"],
             password=st.secrets["tidb"]["password"],
             database=st.secrets["tidb"]["database"],
-            autocommit=True
+            autocommit=True,
+            cursorclass=pymysql.cursors.DictCursor
         )
     except Exception as e:
         st.error(f"Erro de conexão com TiDB: {e}")
@@ -27,17 +26,19 @@ def get_db_connection():
 # --- 3. FUNÇÕES DE BANCO DE DADOS ---
 def carregar_dados():
     conn = get_db_connection()
-    df = pd.read_sql("SELECT * FROM producao ORDER BY data_registro DESC", conn)
-    conn.close()
-    return df
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM producao ORDER BY data_registro DESC")
+            result = cursor.fetchall()
+            return pd.DataFrame(result) if result else pd.DataFrame()
+    finally:
+        conn.close()
 
 def executar_sql(query, params):
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, params)
-        conn.commit()
-        cursor.close()
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
         conn.close()
         return True
     except Exception as e:
@@ -57,16 +58,16 @@ def verificar_login():
             p = st.text_input("Senha", type="password")
             if st.button("ENTRAR"):
                 conn = get_db_connection()
-                cursor = conn.cursor(dictionary=True)
-                cursor.execute("SELECT * FROM usuarios WHERE usuario = %s AND senha = %s", (u, p))
-                user = cursor.fetchone()
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT * FROM usuarios WHERE usuario = %s AND senha = %s", (u, p))
+                    user = cursor.fetchone()
                 conn.close()
                 
                 if user:
                     st.session_state["autenticado"] = True
                     st.session_state["operador"] = u
                     st.success("Acesso liberado!")
-                    time.sleep(0.5) # Evita erro de removeChild
+                    time.sleep(0.5)
                     st.rerun()
                 else:
                     st.error("Usuário ou senha incorretos.")
@@ -83,6 +84,7 @@ st.sidebar.write(f"Logado como: **{st.session_state['operador']}**")
 turno_ativo = st.sidebar.selectbox("Turno:", ["Manhã", "Tarde", "Noite"])
 
 if st.sidebar.button("🔄 Sincronizar Banco"):
+    st.cache_data.clear()
     st.rerun()
 
 if st.sidebar.button("🚪 Sair"):
@@ -91,7 +93,11 @@ if st.sidebar.button("🚪 Sair"):
 
 # --- 7. DASHBOARD SUPERIOR ---
 META_DIA = 5000.0
-produzido = df[df['status'].isin(["Gaiola", "Entregue"])]['p_lavagem'].astype(float).sum()
+if not df.empty and 'p_lavagem' in df.columns:
+    produzido = pd.to_numeric(df[df['status'].isin(["Gaiola", "Entregue"])]['p_lavagem']).sum()
+else:
+    produzido = 0.0
+
 st.title("Gestão de Produção Industrial")
 st.metric("Produção Hoje (kg)", f"{produzido:.1f}", f"{produzido - META_DIA:.1f} para meta")
 st.progress(min(produzido / META_DIA, 1.0))
@@ -116,46 +122,48 @@ with tab1:
                 st.rerun()
 
 with tab2:
-    esp = df[df['status'] == "Aguardando Lavagem"]
-    if not esp.empty:
-        mq = st.selectbox("Máquina:", ["LAVADORA 01", "LAVADORA 02", "LAVADORA 03"])
-        lts = st.multiselect("Lotes para Lavagem:", esp['id'].tolist(), 
-                             format_func=lambda x: f"{df[df['id']==x]['cli'].values[0]} ({df[df['id']==x]['p_in'].values[0]}kg)")
-        if st.button("🚀 INICIAR PROCESSO") and lts:
-            for lid in lts:
-                query = "UPDATE producao SET status=%s, maq=%s, etapa_inicio=%s WHERE id=%s"
-                executar_sql(query, ("Lavagem", mq, datetime.now().isoformat(), lid))
-            st.success("Lavagem iniciada!")
-            time.sleep(0.5)
-            st.rerun()
-    else: st.info("Nenhum lote aguardando.")
+    if not df.empty:
+        esp = df[df['status'] == "Aguardando Lavagem"]
+        if not esp.empty:
+            mq = st.selectbox("Máquina:", ["LAVADORA 01", "LAVADORA 02", "LAVADORA 03"])
+            lts = st.multiselect("Lotes para Lavagem:", esp['id'].tolist())
+            if st.button("🚀 INICIAR PROCESSO") and lts:
+                for lid in lts:
+                    executar_sql("UPDATE producao SET status=%s, maq=%s, etapa_inicio=%s WHERE id=%s", 
+                                 ("Lavagem", mq, datetime.now().isoformat(), lid))
+                st.success("Lavagem iniciada!")
+                time.sleep(0.5)
+                st.rerun()
+        else: st.info("Nenhum lote aguardando.")
 
 with tab3:
-    atv = df[df['status'].isin(["Lavagem", "Secagem", "Passadeira"])]
-    if atv.empty: st.info("Sem produção ativa.")
-    for i, row in atv.iterrows():
-        minutos = int((datetime.now() - datetime.fromisoformat(str(row['etapa_inicio']))).total_seconds() // 60)
-        with st.container():
-            st.markdown(f"**Lote {row['id']} - {row['cli']}** ({row['status']}) - {minutos} min")
-            c1, c2 = st.columns([1, 2])
-            if row['status'] == "Lavagem":
-                if c1.button(f"🌀 Secagem", key=f"sec_{row['id']}"):
-                    executar_sql("UPDATE producao SET status='Secagem', etapa_inicio=%s WHERE id=%s", (datetime.now().isoformat(), row['id']))
-                    st.rerun()
-            elif row['status'] == "Secagem":
-                if c1.button(f"🧣 Passadeira", key=f"pas_{row['id']}"):
-                    executar_sql("UPDATE producao SET status='Passadeira', etapa_inicio=%s WHERE id=%s", (datetime.now().isoformat(), row['id']))
-                    st.rerun()
-            elif row['status'] == "Passadeira":
-                p_f = c2.number_input("Peso Final", value=float(row['p_in']), key=f"p_fin_{row['id']}")
-                if c1.button(f"🏁 Concluir", key=f"con_{row['id']}"):
-                    executar_sql("UPDATE producao SET status='Gaiola', p_lavagem=%s, etapa_inicio=%s WHERE id=%s", (p_f, datetime.now().isoformat(), row['id']))
-                    st.rerun()
-            st.divider()
+    if not df.empty:
+        atv = df[df['status'].isin(["Lavagem", "Secagem", "Passadeira"])]
+        if atv.empty: st.info("Sem produção ativa.")
+        for i, row in atv.iterrows():
+            minutos = int((datetime.now() - datetime.fromisoformat(str(row['etapa_inicio']))).total_seconds() // 60)
+            with st.expander(f"Lote {row['id']} - {row['cli']} ({row['status']}) - {minutos} min", expanded=True):
+                c1, c2 = st.columns(2)
+                if row['status'] == "Lavagem":
+                    if c1.button(f"🌀 Enviar para Secagem", key=f"sec_{row['id']}"):
+                        executar_sql("UPDATE producao SET status='Secagem', etapa_inicio=%s WHERE id=%s", (datetime.now().isoformat(), row['id']))
+                        st.rerun()
+                elif row['status'] == "Secagem":
+                    if c1.button(f"🧣 Enviar para Passadeira", key=f"pas_{row['id']}"):
+                        executar_sql("UPDATE producao SET status='Passadeira', etapa_inicio=%s WHERE id=%s", (datetime.now().isoformat(), row['id']))
+                        st.rerun()
+                elif row['status'] == "Passadeira":
+                    p_f = c2.number_input("Peso Final (kg)", value=float(row['p_in']), key=f"p_fin_{row['id']}")
+                    if c1.button(f"🏁 Concluir Lote", key=f"con_{row['id']}"):
+                        executar_sql("UPDATE producao SET status='Gaiola', p_lavagem=%s, etapa_inicio=%s WHERE id=%s", (p_f, datetime.now().isoformat(), row['id']))
+                        st.rerun()
 
 with tab5:
     st.subheader("Histórico TiDB")
-    st.dataframe(df, use_container_width=True)
+    if not df.empty:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Banco de dados vazio.")
 
 st.markdown("---")
-st.caption(f"Lavo e Levo V31 | TiDB Cloud Connected | {datetime.now().strftime('%d/%m/%Y')}")
+st.caption(f"Lavo e Levo V31 | TiDB Cloud (PyMySQL) | {datetime.now().strftime('%d/%m/%Y')}")
