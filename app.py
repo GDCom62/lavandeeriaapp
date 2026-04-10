@@ -29,6 +29,36 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- SISTEMA DE AUTENTICAÇÃO ---
+def verificar_login():
+    if "autenticado" not in st.session_state:
+        st.session_state["autenticado"] = False
+
+    if not st.session_state["autenticado"]:
+        with st.container():
+            st.markdown("<h2 style='text-align: center;'>🔐 Acesso Restrito - Lavo e Levo</h2>", unsafe_allow_html=True)
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                usuario = st.text_input("Usuário (Operador)").upper()
+                senha = st.text_input("Senha", type="password")
+                
+                # Lista de usuários autorizados (Pode ser movida para o GSheets depois)
+                USUARIOS = {"ADMIN": "1234", "OP01": "lavo2024", "OP02": "industrial"}
+
+                if st.button("ENTRAR"):
+                    if usuario in USUARIOS and USUARIOS[usuario] == senha:
+                        st.session_state["autenticado"] = True
+                        st.session_state["operador"] = usuario
+                        st.success("Acesso liberado!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha incorretos.")
+            st.stop() # Para a execução aqui se não estiver logado
+
+# Chamar a função no início do script
+verificar_login()
+
 # --- FUNÇÃO WHATSAPP (CallMeBot) ---
 def enviar_whatsapp(mensagem):
     # --- CONFIGURAR AQUI ---
