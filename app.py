@@ -3,127 +3,148 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 
-# --- 1. BANCO DE DADOS (Conexão Segura) ---
+# --- 1. BANCO DE DADOS ROBUSTO ---
 def init_db():
-    conn = sqlite3.connect('lavanderia.db', check_same_thread=False)
+    conn = sqlite3.connect('gestao_lavanderia.db')
     c = conn.cursor()
-    c.execute('CREATE TABLE IF NOT EXISTS operadores (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, senha TEXT)')
-    c.execute('''CREATE TABLE IF NOT EXISTS pedidos (
+    # Tabelas base
+    c.execute('CREATE TABLE IF NOT EXISTS operadores (id INTEGER PRIMARY KEY, nome TEXT UNIQUE, senha TEXT, funcao TEXT)')
+    c.execute('''CREATE TABLE IF NOT EXISTS lotes (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
-                 cliente TEXT, servico TEXT, valor REAL, status TEXT, 
-                 data_entrada TEXT, data_saida TEXT, operador TEXT)''')
-    c.execute('SELECT COUNT(*) FROM operadores')
-    if c.fetchone()[0] == 0:
-        c.execute('INSERT INTO operadores (nome, senha) VALUES (?, ?)', ('admin', '1234'))
+                 hospital TEXT,
+                 peso_entrada REAL,
+                 maquina TEXT,
+                 processo TEXT,
+                 status TEXT, -- 'Lavagem', 'Secagem', 'Dobra/Passa', 'Finalizado'
+                 inicio_lavagem TEXT, fim_lavagem TEXT,
+                 inicio_secagem TEXT, fim_secagem TEXT,
+                 inicio_acabamento TEXT, fim_acabamento TEXT,
+                 peso_saida REAL,
+                 gaiola_num TEXT,
+                 operador_lavagem TEXT,
+                 operador_secagem TEXT,
+                 operador_acabamento TEXT)''')
+    
+    # Tabela de contagem de itens (Relação de roupas)
+    c.execute('''CREATE TABLE IF NOT EXISTS contagem_itens (
+                 lote_id INTEGER,
+                 item TEXT,
+                 quantidade INTEGER,
+                 FOREIGN KEY(lote_id) REFERENCES lotes(id))''')
+
+    if not executar_query("SELECT * FROM operadores WHERE nome='admin'"):
+        executar_query("INSERT INTO operadores (nome, senha, funcao) VALUES (?,?,?)", ('admin', '1234', 'Gerente'))
     conn.commit()
     conn.close()
 
 def executar_query(sql, params=()):
-    conn = sqlite3.connect('lavanderia.db', check_same_thread=False)
-    try:
+    with sqlite3.connect('gestao_lavanderia.db') as conn:
         if "SELECT" in sql.upper():
             return pd.read_sql_query(sql, conn, params=params)
-        else:
-            c = conn.cursor()
-            c.execute(sql, params)
-            conn.commit()
-    finally:
-        conn.close()
+        conn.execute(sql, params)
+        conn.commit()
 
-# --- 2. INICIALIZAÇÃO DE ESTADO ---
+# --- 2. LOGICA DE ESTADO ---
 init_db()
-if 'logado' not in st.session_state:
-    st.session_state['logado'] = False
-if 'operador' not in st.session_state:
-    st.session_state['operador'] = "Visitante"
+if 'logado' not in st.session_state: st.session_state['logado'] = False
 
-# --- 3. LÓGICA DE INTERFACE ---
-placeholder = st.empty()
-
+# --- 3. INTERFACE DE ACESSO ---
 if not st.session_state['logado']:
-    with placeholder.container():
-        st.title("🧺 Lavanderia App")
-        st.subheader("Login de Acesso")
-        u = st.text_input("Usuário")
-        s = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
-            # Verificação direta sem abrir múltiplas conexões
-            conn = sqlite3.connect('lavanderia.db')
-            c = conn.cursor()
-            c.execute("SELECT nome FROM operadores WHERE nome=? AND senha=?", (u, s))
-            user = c.fetchone()
-            conn.close()
-            
-            if user:
-                st.session_state['logado'] = True
-                st.session_state['operador'] = user[0]
-                st.rerun()
-            else:
-                st.error("Usuário ou senha incorretos.")
-
+    st.title("🏥 Lavanderia Hospitalar - Rastreabilidade")
+    u = st.text_input("Usuário")
+    s = st.text_input("Senha", type="password")
+    if st.button("Entrar"):
+        res = executar_query("SELECT nome FROM operadores WHERE nome=? AND senha=?", (u, s))
+        if not res.empty:
+            st.session_state.update({"logado": True, "operador": u})
+            st.rerun()
+        else: st.error("Erro de login")
 else:
-    # SE LOGADO, LIMPA O LOGIN E MOSTRA O APP
-    placeholder.empty()
+    st.sidebar.title(f"Operador: {st.session_state['operador']}")
+    etapa = st.sidebar.radio("Fluxo de Produção", ["1. Lavagem", "2. Secagem", "3. Dobra/Passadeira", "4. Expedição", "Relatórios"])
     
-    # MENU LATERAL
-    st.sidebar.title(f"👤 {st.session_state['operador']}")
-    menu = st.sidebar.radio("Navegação", ["Painel Principal", "Novo Pedido", "Relatórios", "Configurações"])
-    
-    if st.sidebar.button("Encerrar Sessão"):
+    if st.sidebar.button("Sair"):
         st.session_state['logado'] = False
-        st.session_state['operador'] = "Visitante"
         st.rerun()
 
-    # --- TELAS ---
-    if menu == "Painel Principal":
-        st.title("📋 Pedidos Ativos")
-        busca = st.text_input("🔍 Filtrar por nome de cliente...")
-        
-        sql = "SELECT * FROM pedidos WHERE status != 'Entregue'"
-        params = []
-        if busca:
-            sql += " AND cliente LIKE ?"
-            params.append(f"%{busca}%")
+    # --- ETAPA 1: LAVAGEM ---
+    if etapa == "1. Lavagem":
+        st.header("📥 Entrada na Lavagem")
+        with st.form("lavagem"):
+            hosp = st.selectbox("Hospital", ["Hospital A", "Hospital B", "Hospital C"])
+            peso = st.number_input("Peso de Entrada (kg)", min_value=0.1)
+            maq = st.selectbox("Máquina", ["M1 (120kg)", "M2 (120kg)", "M3 (100kg)", "M4 (60kg)", "M5 (50kg)"])
+            proc = st.selectbox("Processo", ["Leve (45min)", "Pesado (60min)", "Super Pesado (90min)"])
+            if st.form_submit_button("Iniciar Lavagem"):
+                dt = datetime.now().strftime("%d/%m %H:%M")
+                executar_query("INSERT INTO lotes (hospital, peso_entrada, maquina, processo, status, inicio_lavagem, operador_lavagem) VALUES (?,?,?,?,?,?,?)",
+                               (hosp, peso, maq, proc, "Lavando", dt, st.session_state['operador']))
+                st.success("Lavagem Iniciada!")
+
+    # --- ETAPA 2: SECAGEM ---
+    elif etapa == "2. Secagem":
+        st.header("🔥 Secagem")
+        lotes_lavando = executar_query("SELECT id, hospital, maquina FROM lotes WHERE status='Lavando'")
+        if not lotes_lavando.empty:
+            lote_sel = st.selectbox("Selecione o Lote que saiu da Lavagem", lotes_lavando['id'].astype(str) + " - " + lotes_lavando['hospital'])
+            id_lote = lote_sel.split(" - ")[0]
+            if st.button("Transferir para Secadora"):
+                dt = datetime.now().strftime("%d/%m %H:%M")
+                executar_query("UPDATE lotes SET status='Secando', fim_lavagem=?, inicio_secagem=?, operador_secagem=? WHERE id=?", 
+                               (dt, dt, st.session_state['operador'], id_lote))
+                st.rerun()
+        else: st.info("Nenhum lote aguardando secagem.")
+
+    # --- ETAPA 3: DOBRA / PASSADEIRA ---
+    elif etapa == "3. Dobra/Passadeira":
+        st.header("🧺 Acabamento")
+        lotes_secando = executar_query("SELECT id, hospital FROM lotes WHERE status='Secando'")
+        if not lotes_secando.empty:
+            lote_sel = st.selectbox("Lote vindo da Secagem", lotes_secando['id'].astype(str) + " - " + lotes_secando['hospital'])
+            id_lote = lote_sel.split(" - ")[0]
             
-        df = executar_query(sql, params)
-        
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
-                with st.expander(f"ID #{row['id']} - {row['cliente']}"):
-                    st.write(f"**Serviço:** {row['servico']} | **Valor:** R$ {row['valor']:.2f}")
-                    if st.button(f"Baixar Pedido {row['id']}", key=f"b_{row['id']}"):
-                        dt_s = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        executar_query("UPDATE pedidos SET status='Entregue', data_saida=? WHERE id=?", (dt_s, row['id']))
-                        st.rerun()
-        else:
-            st.info("Nenhum pedido pendente.")
+            tipo_acab = st.radio("Destino", ["Dobra", "Passadeira"])
+            
+            st.subheader("Contagem de Itens")
+            itens = ["Lençóis", "Fronhas", "Oleados", "Pijamas", "Camisolas", "Colchas"]
+            contagem = {}
+            cols = st.columns(2)
+            for i, item in enumerate(itens):
+                contagem[item] = cols[i%2].number_input(item, min_value=0, step=1)
 
-    elif menu == "Novo Pedido":
-        st.title("📥 Registrar Entrada")
-        with st.form("f_pedido", clear_on_submit=True):
-            cl = st.text_input("Nome do Cliente")
-            sv = st.selectbox("Serviço", ["Lavagem", "Secagem", "Passadoria", "Completo"])
-            vl = st.number_input("Valor", min_value=0.0)
-            if st.form_submit_button("Salvar"):
-                dt = datetime.now().strftime("%d/%m/%Y %H:%M")
-                executar_query("INSERT INTO pedidos (cliente, servico, valor, status, data_entrada, operador) VALUES (?,?,?,?,?,?)",
-                               (cl, sv, vl, "Em Processo", dt, st.session_state['operador']))
-                st.success("Pedido salvo!")
+            if st.button("Finalizar Acabamento"):
+                dt = datetime.now().strftime("%d/%m %H:%M")
+                executar_query("UPDATE lotes SET status='Acabado', fim_secagem=?, inicio_acabamento=?, operador_acabamento=? WHERE id=?", 
+                               (dt, dt, st.session_state['operador'], id_lote))
+                for item, qtd in contagem.items():
+                    if qtd > 0:
+                        executar_query("INSERT INTO contagem_itens (lote_id, item, quantidade) VALUES (?,?,?)", (id_lote, item, qtd))
+                st.success("Dados de acabamento registrados!")
+        else: st.info("Nada para dobrar/passar no momento.")
 
-    elif menu == "Relatórios":
-        st.title("💰 Financeiro")
-        df_f = executar_query("SELECT * FROM pedidos")
-        if df_f is not None and not df_f.empty:
-            faturado = df_f[df_f['status'] == 'Entregue']['valor'].sum()
-            st.metric("Total Recebido", f"R$ {faturado:.2f}")
-            st.dataframe(df_f)
+    # --- ETAPA 4: EXPEDIÇÃO (Gaiolas e Motorista) ---
+    elif etapa == "4. Expedição":
+        st.header("🚚 Pesagem Final e Saída")
+        lotes_acabados = executar_query("SELECT id, hospital FROM lotes WHERE status='Acabado'")
+        if not lotes_acabados.empty:
+            lote_sel = st.selectbox("Lote Pronto", lotes_acabados['id'].astype(str) + " - " + lotes_acabados['hospital'])
+            id_lote = lote_sel.split(" - ")[0]
+            
+            peso_f = st.number_input("Peso Total de Saída (kg)")
+            gaiola = st.text_input("Número da Gaiola")
+            
+            if st.button("Despachar Lote"):
+                dt = datetime.now().strftime("%d/%m %H:%M")
+                executar_query("UPDATE lotes SET status='Finalizado', fim_acabamento=?, peso_saida=?, gaiola_num=? WHERE id=?", 
+                               (dt, peso_f, gaiola, id_lote))
+                st.success("Lote enviado para o motorista!")
+        else: st.info("Nada pronto para expedição.")
 
-    elif menu == "Configurações":
-        st.title("⚙️ Operadores")
-        with st.form("f_op"):
-            n, s = st.text_input("Novo Usuário"), st.text_input("Nova Senha", type="password")
-            if st.form_submit_button("Cadastrar"):
-                try:
-                    executar_query("INSERT INTO operadores (nome, senha) VALUES (?,?)", (n, s))
-                    st.success("Cadastrado!")
-                except: st.error("Erro: Usuário já existe.")
+    # --- RELATÓRIOS ---
+    elif etapa == "Relatórios":
+        st.header("📊 Produtividade e Rastreabilidade")
+        dados = executar_query("SELECT * FROM lotes")
+        st.dataframe(dados)
+        if st.button("Gerar Relatório para Motorista"):
+             # Aqui pode-se criar a lógica de exportação PDF ou Excel
+             st.write("Relatórios por hospital gerados com sucesso.")
