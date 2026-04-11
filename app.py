@@ -1,78 +1,91 @@
 import streamlit as st
 import sqlite3
+from datetime import datetime
 
 # --- 1. CONFIGURAÇÃO E BANCO DE DADOS ---
-# Conecta ao SQLite (cria o arquivo se não existir)
 def init_db():
-    conn = sqlite3.connect('usuarios.db')
+    conn = sqlite3.connect('lavanderia.db')
     c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS operadores (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            senha TEXT NOT NULL
-        )
-    ''')
-    # Adiciona um operador padrão se a tabela estiver vazia
+    # Tabela de Operadores
+    c.execute('''CREATE TABLE IF NOT EXISTS operadores 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT UNIQUE, senha TEXT)''')
+    # Tabela de Pedidos
+    c.execute('''CREATE TABLE IF NOT EXISTS pedidos (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 cliente TEXT,
+                 servico TEXT,
+                 valor REAL,
+                 status TEXT,
+                 data_entrada TEXT,
+                 operador TEXT)''')
+    
     c.execute('SELECT COUNT(*) FROM operadores')
     if c.fetchone()[0] == 0:
         c.execute('INSERT INTO operadores (nome, senha) VALUES (?, ?)', ('admin', '1234'))
     conn.commit()
     conn.close()
 
-# Função para validar o login
-def validar_login(usuario, senha):
-    conn = sqlite3.connect('usuarios.db')
+# Funções de Apoio
+def executar_query(sql, params=()):
+    conn = sqlite3.connect('lavanderia.db')
     c = conn.cursor()
-    c.execute('SELECT * FROM operadores WHERE nome = ? AND senha = ?', (usuario, senha))
-    resultado = c.fetchone()
+    c.execute(sql, params)
+    res = c.fetchall()
+    conn.commit()
     conn.close()
-    return resultado
+    return res
 
-# --- 2. INICIALIZAÇÃO DO ESTADO (Prevenção de KeyError) ---
-init_db() # Garante que o banco existe antes de tudo
+# --- 2. INICIALIZAÇÃO ---
+init_db()
+if 'logado' not in st.session_state: st.session_state['logado'] = False
+if 'operador' not in st.session_state: st.session_state['operador'] = "Não identificado"
 
-if 'logado' not in st.session_state:
-    st.session_state['logado'] = False
-if 'operador' not in st.session_state:
-    st.session_state['operador'] = "Não identificado"
-
-# --- 3. LÓGICA DE NAVEGAÇÃO ---
+# --- 3. LOGICA DE ACESSO ---
 if not st.session_state['logado']:
-    # TELA DE LOGIN
-    st.title("Lavanderia App - Acesso")
-    with st.form("login_form"):
-        usuario_input = st.text_input("Usuário")
-        senha_input = st.text_input("Senha", type="password")
-        botao_entrar = st.form_submit_button("Entrar")
-
-        if botao_entrar:
-            if validar_login(usuario_input, senha_input):
-                st.session_state['logado'] = True
-                st.session_state['operador'] = usuario_input
-                st.success("Login realizado com sucesso!")
+    st.title("🧺 Lavanderia App - Login")
+    with st.form("login"):
+        u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
+        if st.form_submit_button("Entrar"):
+            res = executar_query("SELECT * FROM operadores WHERE nome=? AND senha=?", (u, s))
+            if res:
+                st.session_state.update({"logado": True, "operador": u})
                 st.rerun()
-            else:
-                st.error("Usuário ou senha incorretos.")
-
+            else: st.error("Acesso negado.")
 else:
-    # --- BARRA LATERAL (Uso seguro da variável) ---
-    st.sidebar.title(f"Operador: {st.session_state['operador']}")
-    
+    # --- MENU LATERAL ---
+    st.sidebar.title(f"👤 {st.session_state['operador']}")
+    menu = st.sidebar.radio("Navegação", ["Painel Principal", "Novo Pedido", "Cadastrar Operador"])
     if st.sidebar.button("Sair"):
-        st.session_state['logado'] = False
-        st.session_state['operador'] = "Não identificado"
+        st.session_state.update({"logado": False, "operador": "Não identificado"})
         st.rerun()
 
-    # --- TELA PRINCIPAL ---
-    st.title("Sistema de Lavanderia")
-    st.subheader(f"Bem-vindo(a), {st.session_state['operador']}")
-    
-    # Exemplo de conteúdo do App
-    cols = st.columns(3)
-    cols[0].metric("Pedidos Hoje", "12")
-    cols[1].metric("Em Processo", "5")
-    cols[2].metric("Prontos", "7")
-    
-    st.divider()
-    st.write("Seu sistema de gerenciamento está pronto para uso.")
+    # --- TELAS ---
+    if menu == "Painel Principal":
+        st.title("📋 Pedidos Ativos")
+        dados = executar_query("SELECT id, cliente, servico, valor, status, data_entrada FROM pedidos WHERE status != 'Entregue'")
+        if dados:
+            st.table(dados)
+        else:
+            st.info("Nenhum pedido pendente.")
+
+    elif menu == "Novo Pedido":
+        st.title("📥 Entrada de Roupa")
+        with st.form("form_pedido"):
+            cliente = st.text_input("Nome do Cliente")
+            servico = st.selectbox("Tipo de Serviço", ["Lavagem Simples", "Lavagem + Secagem", "Passadoria", "Edredom/Tapete"])
+            valor = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+            if st.form_submit_button("Registrar Pedido"):
+                data_hoje = datetime.now().strftime("%d/%m/%Y %H:%M")
+                executar_query("INSERT INTO pedidos (cliente, servico, valor, status, data_entrada, operador) VALUES (?,?,?,?,?,?)",
+                               (cliente, servico, valor, "Em Processo", data_hoje, st.session_state['operador']))
+                st.success("Pedido registrado!")
+
+    elif menu == "Cadastrar Operador":
+        st.title("👥 Gestão de Equipe")
+        with st.form("cad_op"):
+            n, s = st.text_input("Nome"), st.text_input("Senha", type="password")
+            if st.form_submit_button("Salvar"):
+                try:
+                    executar_query("INSERT INTO operadores (nome, senha) VALUES (?,?)", (n, s))
+                    st.success("Operador cadastrado!")
+                except: st.error("Erro: Usuário já existe.")
