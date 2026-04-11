@@ -46,37 +46,59 @@ def executar_sql(query, params):
         return False
 
 # --- 4. SISTEMA DE AUTENTICAÇÃO ---
+# --- SISTEMA DE AUTENTICAÇÃO ESTÁVEL ---
 def verificar_login():
+    # Inicializa o estado de autenticação se não existir
     if "autenticado" not in st.session_state:
         st.session_state["autenticado"] = False
 
-    if not st.session_state["autenticado"]:
-        st.markdown("<h2 style='text-align: center;'>🔐 Login Industrial - TiDB</h2>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            u = st.text_input("Operador").upper()
-            p = st.text_input("Senha", type="password")
-            if st.button("ENTRAR"):
-                conn = get_db_connection()
-                with conn.cursor() as cursor:
-                    cursor.execute("SELECT * FROM usuarios WHERE usuario = %s AND senha = %s", (u, p))
-                    user = cursor.fetchone()
-                conn.close()
-                
-                if user:
-                    st.session_state["autenticado"] = True
-                    st.session_state["operador"] = u
-                    st.success("Acesso liberado!")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Usuário ou senha incorretos.")
-        st.stop()
+    # Se já estiver logado, não mostra a tela de login
+    if st.session_state["autenticado"]:
+        return
 
+    # Centraliza o formulário de login
+    st.markdown("<h2 style='text-align: center;'>🔐 Login Lavo e Levo</h2>", unsafe_allow_html=True)
+    
+    # Usa um container e colunas para organizar a tela
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        with st.form("form_login"):
+            u = st.text_input("Usuário").upper().strip()
+            p = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("ENTRAR NO SISTEMA")
+            
+            if entrar:
+                if not u or not p:
+                    st.warning("Preencha todos os campos.")
+                else:
+                    try:
+                        conn = get_db_connection()
+                        with conn.cursor() as cursor:
+                            # Busca o usuário no TiDB
+                            sql = "SELECT usuario FROM usuarios WHERE usuario = %s AND senha = %s"
+                            cursor.execute(sql, (u, p))
+                            user = cursor.fetchone()
+                        conn.close()
+                        
+                        if user:
+                            # Sucesso! Salva no estado da sessão
+                            st.session_state["autenticado"] = True
+                            st.session_state["operador"] = u
+                            st.success(f"Acesso liberado! Aguarde...")
+                            time.sleep(1) # Tempo para o usuário ver a mensagem
+                            st.rerun()
+                        else:
+                            st.error("Usuário ou senha incorretos.")
+                    except Exception as e:
+                        st.error(f"Erro ao conectar ao banco: {e}")
+    
+    # Trava a execução do restante do script enquanto não logar
+    st.stop()
+
+# Chama a função logo no início do código
 verificar_login()
 
-# --- 5. CARREGAMENTO INICIAL ---
-df = carregar_dados()
 
 # --- 6. SIDEBAR ---
 st.sidebar.title("🧺 Lavo e Levo")
