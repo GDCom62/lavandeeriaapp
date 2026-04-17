@@ -1,3 +1,5 @@
-sqlalchemy
+streamlit
 pandas
+sqlalchemy
 xlsxwriter
+fpdf2
