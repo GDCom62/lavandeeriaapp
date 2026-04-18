@@ -52,7 +52,7 @@ init_db()
 for key, val in {'logado': False, 'operador': "", 'funcao': "", 'tambor': [], 'etapa_atual': "Início"}.items():
     if key not in st.session_state: st.session_state[key] = val
 
-# --- 4. FUNÇÃO PDF (CORRIGIDA) ---
+# --- 4. FUNÇÃO PDF ---
 def gerar_pdf_etiqueta(lote, itens):
     pdf = FPDF()
     pdf.add_page()
@@ -63,19 +63,19 @@ def gerar_pdf_etiqueta(lote, itens):
     pdf.cell(95, 10, f"Hospital: {lote['hospital']}", 0, 0)
     pdf.cell(95, 10, f"Gaiola N°: {lote['gaiola_num']}", 0, 1)
     pdf.cell(95, 10, f"Peso Final: {lote['peso_saida']} kg", 0, 0)
-    pdf.cell(95, 10, f"Data: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
+    pdf.cell(95, 10, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1)
     pdf.ln(5); pdf.set_font("Arial", "B", 12); pdf.cell(190, 10, "CONTEÚDO:", 0, 1)
     pdf.set_font("Arial", "", 12)
     for _, item in itens.iterrows():
         pdf.cell(190, 8, f"- {item['item']}: {item['quantidade']} un", 0, 1)
-    
-    return bytes(pdf.output()) # Retorno em bytes para evitar erro no Streamlit
+    return bytes(pdf.output())
 
 # --- 5. LOGIN ---
 if not st.session_state['logado']:
     st.title("🏥 Gestão Lavanderia Hospitalar")
     with st.form("login"):
-        u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
+        u = st.text_input("Usuário")
+        s = st.text_input("Senha", type="password")
         if st.form_submit_button("Entrar"):
             res = consultar_db("SELECT nome, funcao FROM operadores WHERE nome=:u AND senha=:s", {"u": u, "s": s})
             if not res.empty:
@@ -83,10 +83,20 @@ if not st.session_state['logado']:
                 st.rerun()
             else: st.error("Acesso Negado")
 else:
+    # --- BARRA LATERAL ---
     st.sidebar.title(f"👤 {st.session_state['operador']}")
-    menu = st.sidebar.radio("Navegação", ["Painel Geral", "1. Lavagem", "2. Rampa", "3. Secagem", "4. Acabamento", "5. Expedição", "📊 Relatórios"])
+    st.sidebar.info(f"Função: {st.session_state['funcao']}")
+    
+    opcoes_menu = ["Painel Geral", "1. Lavagem", "2. Rampa", "3. Secagem", "4. Acabamento", "5. Expedição", "📊 Relatórios"]
+    if st.session_state['funcao'] == "Administrador":
+        opcoes_menu.append("⚙️ Gestão de Equipe")
+    
+    menu = st.sidebar.radio("Navegação", opcoes_menu)
     st.session_state['etapa_atual'] = menu
-    if st.sidebar.button("Sair"): st.session_state['logado'] = False; st.rerun()
+    
+    if st.sidebar.button("Sair"): 
+        st.session_state.update({"logado": False, "operador": "", "funcao": ""})
+        st.rerun()
 
     # --- TELAS ---
     if menu == "Painel Geral":
@@ -133,37 +143,26 @@ else:
                                {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "op": st.session_state['operador'], "id": id_l}); st.rerun()
 
     elif menu == "4. Acabamento":
-        st.header("🧺 Dobra e Passagem (Edição)")
+        st.header("🧺 Dobra e Passagem")
         df = consultar_db("SELECT id, hospital, status FROM lotes WHERE status IN ('Secando', 'Pronto')")
         if not df.empty:
             sel = st.selectbox("Selecione o Lote:", df['id'].astype(str) + " - " + df['hospital'])
             id_l = int(str(sel).split(" - ")[0])
-            status = df[df['id'] == id_l]['status'].values[0]
+            status = df[df['id'] == id_l].iloc[0]['status']
 
             if status == 'Secando':
-                st.info("Ajuste as quantidades abaixo (clique na célula para editar):")
-                # Lista de itens editável
-                itens_df = pd.DataFrame([
-                    {"Item": "Lençóis", "Quantidade": 0},
-                    {"Item": "Fronhas", "Quantidade": 0},
-                    {"Item": "Pijamas", "Quantidade": 0},
-                    {"Item": "Campos", "Quantidade": 0},
-                    {"Item": "Colchas", "Quantidade": 0},
-                    {"Item": "Toalhas", "Quantidade": 0}
-                ])
-                # Componente de edição estilo Excel
+                lista_itens = ["Lencol", "Fronha", "Oleado", "Colcha", "Edredon", "Calca", "Camisa", "Campo", "Tracado", "Camisola Adulto", "Camisola Infantil", "Cobertor", "Capote", "Toalha de Banho", "Toalha de Rosto", "Piso", "Cortina", "Outros"]
+                itens_df = pd.DataFrame([{"Item": i, "Quantidade": 0} for i in lista_itens])
                 edicao = st.data_editor(itens_df, use_container_width=True, hide_index=True)
 
                 if st.button("✅ Salvar e Finalizar"):
                     dt = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    executar_query("UPDATE lotes SET status='Pronto', fim_secagem=:dt, inicio_acabamento=:dt, operador_acabamento=:op WHERE id=:id", 
-                                   {"dt": dt, "op": st.session_state['operador'], "id": id_l})
+                    executar_query("UPDATE lotes SET status='Pronto', fim_secagem=:dt, inicio_acabamento=:dt, operador_acabamento=:op WHERE id=:id", {"dt": dt, "op": st.session_state['operador'], "id": id_l})
                     for _, row in edicao.iterrows():
                         if row['Quantidade'] > 0:
                             executar_query("INSERT INTO contagem_itens VALUES (:id, :it, :q)", {"id": id_l, "it": row['Item'], "q": row['Quantidade']})
                     st.success("Contagem salva!"); st.rerun()
             else:
-                st.warning("Este lote já foi processado.")
                 if st.button("⏪ Estornar p/ Secagem"):
                     executar_query("UPDATE lotes SET status='Secando', fim_secagem=NULL WHERE id=:id", {"id": id_l})
                     executar_query("DELETE FROM contagem_itens WHERE lote_id=:id", {"id": id_l}); st.rerun()
@@ -174,22 +173,38 @@ else:
         if not df.empty:
             sel = st.selectbox("Lote:", df['id'].astype(str) + " - " + df['hospital'])
             id_l = int(str(sel).split(" - ")[0])
-            status = df[df['id'] == id_l]['status'].values[0]
+            lote_row = df[df['id'] == id_l].iloc[0]
 
-            if status == 'Pronto':
+            if lote_row['status'] == 'Pronto':
                 ps, gai = st.number_input("Peso Saída", min_value=0.1), st.text_input("Gaiola N°")
                 if st.button("✅ Liberar"):
-                    executar_query("UPDATE lotes SET status='Disponível', fim_acabamento=:dt, peso_saida=:ps, gaiola_num=:g WHERE id=:id", 
-                                   {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "ps": ps, "g": gai, "id": id_l}); st.rerun()
+                    executar_query("UPDATE lotes SET status='Disponível', fim_acabamento=:dt, peso_saida=:ps, gaiola_num=:g WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "ps": ps, "g": gai, "id": id_l}); st.rerun()
             else:
                 l_data = consultar_db("SELECT * FROM lotes WHERE id=:id", {"id": id_l}).iloc[0]
                 itens = consultar_db("SELECT item, quantidade FROM contagem_itens WHERE lote_id=:id", {"id": id_l})
                 st.download_button("📥 Baixar Etiqueta PDF", gerar_pdf_etiqueta(l_data, itens), f"etiqueta_{id_l}.pdf", mime="application/pdf")
 
     elif menu == "📊 Relatórios":
-        st.title("📊 Relatórios")
+        st.title("📊 Relatórios Gerenciais")
         df_f = consultar_db("SELECT * FROM lotes")
         st.dataframe(df_f)
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_f.to_excel(wr, index=False)
         st.download_button("📥 Baixar Excel", buf.getvalue(), "relatorio.xlsx")
+
+    elif menu == "⚙️ Gestão de Equipe":
+        st.header("⚙️ Gerenciamento de Usuários")
+        with st.form("cad_usuario"):
+            novo_nome = st.text_input("Nome do Usuário")
+            nova_senha = st.text_input("Senha", type="password")
+            nova_funcao = st.selectbox("Função", ["Operador", "Motorista", "Administrador"])
+            if st.form_submit_button("Cadastrar Colaborador"):
+                try:
+                    executar_query("INSERT INTO operadores (nome, senha, funcao) VALUES (:n, :s, :f)", {"n": novo_nome, "s": nova_senha, "f": nova_funcao})
+                    st.success(f"Usuário {novo_nome} cadastrado com sucesso!")
+                except:
+                    st.error("Erro: Nome de usuário já existe ou dados inválidos.")
+        
+        st.subheader("Colaboradores Ativos")
+        usuarios = consultar_db("SELECT nome, funcao FROM operadores")
+        st.table(usuarios)
