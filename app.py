@@ -85,7 +85,6 @@ if not st.session_state['logado']:
 else:
     # --- BARRA LATERAL ---
     st.sidebar.title(f"👤 {st.session_state['operador']}")
-    st.sidebar.info(f"Função: {st.session_state['funcao']}")
     
     opcoes_menu = ["Painel Geral", "1. Lavagem", "2. Rampa", "3. Secagem", "4. Acabamento", "5. Expedição", "📊 Relatórios"]
     if st.session_state['funcao'] == "Administrador":
@@ -148,9 +147,9 @@ else:
         if not df.empty:
             sel = st.selectbox("Selecione o Lote:", df['id'].astype(str) + " - " + df['hospital'])
             id_l = int(str(sel).split(" - ")[0])
-            status = df[df['id'] == id_l].iloc[0]['status']
+            lote_data = df[df['id'] == id_l].iloc[0]
 
-            if status == 'Secando':
+            if lote_data['status'] == 'Secando':
                 lista_itens = ["Lencol", "Fronha", "Oleado", "Colcha", "Edredon", "Calca", "Camisa", "Campo", "Tracado", "Camisola Adulto", "Camisola Infantil", "Cobertor", "Capote", "Toalha de Banho", "Toalha de Rosto", "Piso", "Cortina", "Outros"]
                 itens_df = pd.DataFrame([{"Item": i, "Quantidade": 0} for i in lista_itens])
                 edicao = st.data_editor(itens_df, use_container_width=True, hide_index=True)
@@ -180,9 +179,9 @@ else:
                 if st.button("✅ Liberar"):
                     executar_query("UPDATE lotes SET status='Disponível', fim_acabamento=:dt, peso_saida=:ps, gaiola_num=:g WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "ps": ps, "g": gai, "id": id_l}); st.rerun()
             else:
-                l_data = consultar_db("SELECT * FROM lotes WHERE id=:id", {"id": id_l}).iloc[0]
-                itens = consultar_db("SELECT item, quantidade FROM contagem_itens WHERE lote_id=:id", {"id": id_l})
-                st.download_button("📥 Baixar Etiqueta PDF", gerar_pdf_etiqueta(l_data, itens), f"etiqueta_{id_l}.pdf", mime="application/pdf")
+                l_data_full = consultar_db("SELECT * FROM lotes WHERE id=:id", {"id": id_l}).iloc[0]
+                itens_full = consultar_db("SELECT item, quantidade FROM contagem_itens WHERE lote_id=:id", {"id": id_l})
+                st.download_button("📥 Baixar Etiqueta PDF", gerar_pdf_etiqueta(l_data_full, itens_full), f"etiqueta_{id_l}.pdf", mime="application/pdf")
 
     elif menu == "📊 Relatórios":
         st.title("📊 Relatórios Gerenciais")
@@ -194,17 +193,44 @@ else:
 
     elif menu == "⚙️ Gestão de Equipe":
         st.header("⚙️ Gerenciamento de Usuários")
-        with st.form("cad_usuario"):
-            novo_nome = st.text_input("Nome do Usuário")
-            nova_senha = st.text_input("Senha", type="password")
-            nova_funcao = st.selectbox("Função", ["Operador", "Motorista", "Administrador"])
-            if st.form_submit_button("Cadastrar Colaborador"):
-                try:
-                    executar_query("INSERT INTO operadores (nome, senha, funcao) VALUES (:n, :s, :f)", {"n": novo_nome, "s": nova_senha, "f": nova_funcao})
-                    st.success(f"Usuário {novo_nome} cadastrado com sucesso!")
-                except:
-                    st.error("Erro: Nome de usuário já existe ou dados inválidos.")
         
-        st.subheader("Colaboradores Ativos")
-        usuarios = consultar_db("SELECT nome, funcao FROM operadores")
-        st.table(usuarios)
+        tab_cad, tab_edit = st.tabs(["Cadastrar Novo", "Editar / Remover"])
+        
+        with tab_cad:
+            with st.form("cad_usuario"):
+                novo_nome = st.text_input("Nome do Usuário")
+                nova_senha = st.text_input("Senha", type="password")
+                nova_funcao = st.selectbox("Função", ["Operador", "Motorista", "Administrador"])
+                if st.form_submit_button("Cadastrar Colaborador"):
+                    try:
+                        executar_query("INSERT INTO operadores (nome, senha, funcao) VALUES (:n, :s, :f)", {"n": novo_nome, "s": nova_senha, "f": nova_funcao})
+                        st.success(f"Usuário {novo_nome} cadastrado!")
+                        st.rerun()
+                    except: st.error("Erro: Usuário já existe.")
+        
+        with tab_edit:
+            usuarios = consultar_db("SELECT id, nome, funcao FROM operadores WHERE nome != 'admin'")
+            if not usuarios.empty:
+                sel_u = st.selectbox("Selecionar Colaborador", usuarios['nome'].tolist())
+                u_data = usuarios[usuarios['nome'] == sel_u].iloc[0]
+                
+                with st.form("edit_usuario"):
+                    edit_nome = st.text_input("Alterar Nome", value=u_data['nome'])
+                    edit_senha = st.text_input("Nova Senha (deixe em branco para manter)", type="password")
+                    edit_funcao = st.selectbox("Alterar Função", ["Operador", "Motorista", "Administrador"], index=["Operador", "Motorista", "Administrador"].index(u_data['funcao']))
+                    
+                    c1, c2 = st.columns(2)
+                    if c1.form_submit_button("Salvar Alterações"):
+                        if edit_senha:
+                            executar_query("UPDATE operadores SET nome=:n, senha=:s, funcao=:f WHERE id=:id", {"n": edit_nome, "s": edit_senha, "f": edit_funcao, "id": int(u_data['id'])})
+                        else:
+                            executar_query("UPDATE operadores SET nome=:n, funcao=:f WHERE id=:id", {"n": edit_nome, "f": edit_funcao, "id": int(u_data['id'])})
+                        st.success("Dados atualizados!")
+                        st.rerun()
+                        
+                    if c2.form_submit_button("❌ REMOVER COLABORADOR"):
+                        executar_query("DELETE FROM operadores WHERE id=:id", {"id": int(u_data['id'])})
+                        st.warning("Colaborador removido!")
+                        st.rerun()
+            else:
+                st.info("Nenhum colaborador extra cadastrado.")
