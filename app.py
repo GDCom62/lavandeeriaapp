@@ -10,6 +10,7 @@ from fpdf import FPDF
 # --- 1. DESIGN E CONFIGURAÇÃO ---
 st.set_page_config(page_title="Lavanderia Hospitalar Pro", layout="wide")
 
+# CSS para Design Elegante
 st.markdown("""
     <style>
     .stButton>button, .stTextInput>div>div>input, .stSelectbox>div>div>div, .stNumberInput>div>div>input, .stDataEditor { border-radius: 12px !important; }
@@ -22,7 +23,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. BANCO DE DADOS (SQLAlchemy para Acesso Múltiplo) ---
+# --- 2. BANCO DE DADOS (SQLAlchemy) ---
 engine = create_engine("sqlite:///gestao_lavanderia.db", pool_size=20, max_overflow=30)
 
 def executar_query(sql, params={}):
@@ -56,6 +57,8 @@ for key, val in {'logado': False, 'operador': "", 'funcao': "", 'tambor': [], 'e
 def gerar_pdf_etiqueta(lote, itens):
     pdf = FPDF()
     pdf.add_page()
+    try: pdf.image('logo.png', 10, 8, 33)
+    except: pass
     pdf.set_font("Arial", "B", 18)
     pdf.cell(190, 15, "ETIQUETA DE GAIOLA", 1, 1, "C")
     pdf.set_font("Arial", "", 12)
@@ -63,7 +66,7 @@ def gerar_pdf_etiqueta(lote, itens):
     pdf.cell(95, 10, f"Hospital: {lote['hospital']}", 0, 0)
     pdf.cell(95, 10, f"Gaiola N°: {lote['gaiola_num']}", 0, 1)
     pdf.cell(95, 10, f"Peso Final: {lote['peso_saida']} kg", 0, 0)
-    pdf.cell(95, 10, f"Data: {datetime.now().strftime('%d/%m/%Y')}", 0, 1)
+    pdf.cell(95, 10, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", 0, 1)
     pdf.ln(5); pdf.set_font("Arial", "B", 12); pdf.cell(190, 10, "CONTEÚDO:", 0, 1)
     for _, item in itens.iterrows():
         pdf.cell(190, 8, f"- {item['item']}: {item['quantidade']} un", 0, 1)
@@ -77,7 +80,7 @@ def enviar_backup_email():
         msg = EmailMessage()
         msg['Subject'] = f"📦 BACKUP LAVANDERIA - {datetime.now().strftime('%d/%m/%Y')}"
         msg['From'], msg['To'] = remetente, destinatario
-        msg.set_content("Backup do banco de dados em anexo.")
+        msg.set_content("Backup em anexo.")
         with open("gestao_lavanderia.db", "rb") as f:
             msg.add_attachment(f.read(), maintype="application", subtype="x-sqlite3", filename="gestao_lavanderia.db")
         with smtplib.SMTP_SSL('://gmail.com', 465) as smtp:
@@ -88,49 +91,55 @@ def enviar_backup_email():
 
 # --- 5. LOGIN ---
 if not st.session_state['logado']:
-    st.title("🏥 Gestão Lavanderia Hospitalar")
-    with st.form("login"):
-        u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
-        if st.form_submit_button("Entrar"):
-            res = consultar_db("SELECT nome, funcao FROM operadores WHERE nome=:u AND senha=:s", {"u": u, "s": s})
-            if not res.empty:
-                st.session_state.update({"logado": True, "operador": res.iloc[0]['nome'], "funcao": res.iloc[0]['funcao']})
-                st.rerun()
-            else: st.error("Acesso Negado")
+    col_l1, col_l2, col_l3 = st.columns([1,2,1])
+    with col_l2:
+        try: st.image("logo.png", use_container_width=True)
+        except: st.title("🏥 Gestão Lavanderia")
+        with st.form("login"):
+            u, s = st.text_input("Usuário"), st.text_input("Senha", type="password")
+            if st.form_submit_button("Entrar"):
+                res = consultar_db("SELECT nome, funcao FROM operadores WHERE nome=:u AND senha=:s", {"u": u, "s": s})
+                if not res.empty:
+                    st.session_state.update({"logado": True, "operador": res.iloc[0]['nome'], "funcao": res.iloc[0]['funcao']})
+                    st.rerun()
+                else: st.error("Acesso Negado")
 else:
     # --- BARRA LATERAL ---
+    try: st.sidebar.image("logo.png", use_container_width=True)
+    except: pass
     st.sidebar.title(f"👤 {st.session_state['operador']}")
-    if st.sidebar.button("🚨 PÂNICO", type="primary", use_container_width=True):
-        executar_query("INSERT INTO alertas_panico (operador, etapa, data, resolvido) VALUES (:op, :et, :dt, 0)",
-                       {"op": st.session_state['operador'], "et": st.session_state['etapa_atual'], "dt": datetime.now().strftime("%H:%M")})
-        st.sidebar.warning("Alerta Enviado!")
-
+    
     menu = st.sidebar.radio("Navegação", ["Painel Geral", "1. Lavagem", "2. Rampa", "3. Secagem", "4. Acabamento", "5. Expedição", "📊 Relatórios", "⚙️ Gestão"])
-    st.session_state['etapa_atual'] = menu
     if st.sidebar.button("Sair"): st.session_state['logado'] = False; st.rerun()
 
     # --- 6. TELAS ---
     if menu == "Painel Geral":
-        st.title("📈 Monitoramento Ativo")
+        col_t1, col_t2 = st.columns([1, 4])
+        with col_t1:
+            try: st.image("logo.png", width=120)
+            except: pass
+        with col_t2:
+            st.title("📈 Monitoramento Ativo")
+        
         panicos = consultar_db("SELECT * FROM alertas_panico WHERE resolvido=0")
         if not panicos.empty:
             for _, p in panicos.iterrows():
                 st.error(f"🆘 PÂNICO: {p['operador']} em {p['etapa']} ({p['data']})")
                 if st.button(f"Resolver {p['id']}", key=f"pan_{p['id']}"):
                     executar_query("UPDATE alertas_panico SET resolvido=1 WHERE id=:id", {"id": p['id']}); st.rerun()
-            st.components.v1.html('<audio autoplay><source src="https://soundjay.com"></audio>', height=0)
         
         df_l = consultar_db("SELECT id, hospital, status, maquina, inicio_lavagem FROM lotes WHERE status != 'Finalizado'")
         if not df_l.empty:
             st.dataframe(df_l, use_container_width=True)
             sel_raw = st.selectbox("Gerenciar Lote:", ["Selecione..."] + (df_l['id'].astype(str) + " - " + df_l['hospital']).tolist())
             if sel_raw != "Selecione...":
-                id_r = int(sel_raw.split(" - ")[0])
+                id_r = int(sel_raw.split(" - "))
                 c1, c2 = st.columns(2)
                 if c1.button("🔄 Reiniciar"):
                     executar_query("UPDATE lotes SET status='Lavando', fim_lavagem=NULL, inicio_secagem=NULL, fim_secagem=NULL, inicio_acabamento=NULL, fim_acabamento=NULL WHERE id=:id", {"id": id_r}); st.rerun()
                 if c2.button("❌ Excluir"):
                     executar_query("DELETE FROM lotes WHERE id=:id", {"id": id_r}); st.rerun()
+        else: st.info("Sem lotes em processamento.")
 
     elif menu == "1. Lavagem":
         st.header("📥 Entrada Lavadora")
@@ -155,14 +164,14 @@ else:
         if not df.empty:
             sel = st.selectbox("Lote saindo:", df['id'].astype(str) + " - " + df['hospital'])
             if st.button("✅ Enviar p/ Rampa"):
-                executar_query("UPDATE lotes SET status='Na Rampa', fim_lavagem=:dt WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "id": int(sel.split(" - ")[0])}); st.rerun()
+                executar_query("UPDATE lotes SET status='Na Rampa', fim_lavagem=:dt WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "id": int(sel.split(" - "))}); st.rerun()
 
     elif menu == "3. Secagem":
         st.header("🔥 Secagem")
         df = consultar_db("SELECT id, hospital, status FROM lotes WHERE status IN ('Na Rampa', 'Secando')")
         if not df.empty:
             sel = st.selectbox("Lote:", df['id'].astype(str) + " - " + df['hospital'])
-            id_l = int(sel.split(" - ")[0])
+            id_l = int(sel.split(" - "))
             stat = df[df['id']==id_l].iloc[0]['status']
             if stat == 'Na Rampa' and st.button("🚀 Iniciar Secagem"):
                 executar_query("UPDATE lotes SET status='Secando', inicio_secagem=:dt, operador_secagem=:op WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "op": st.session_state['operador'], "id": id_l}); st.rerun()
@@ -174,12 +183,13 @@ else:
         df = consultar_db("SELECT id, hospital, status FROM lotes WHERE status IN ('Secando', 'Pronto')")
         if not df.empty:
             sel = st.selectbox("Lote:", df['id'].astype(str) + " - " + df['hospital'])
-            id_l = int(sel.split(" - ")[0])
+            id_l = int(sel.split(" - "))
             if df[df['id']==id_l].iloc[0]['status'] == 'Secando':
                 lista = ["Lencol", "Fronha", "Oleado", "Colcha", "Edredon", "Calca", "Camisa", "Campo", "Tracado", "Camisola Adulto", "Camisola Infantil", "Cobertor", "Capote", "Toalha de Banho", "Toalha de Rosto", "Piso", "Cortina", "Outros"]
                 ed = st.data_editor(pd.DataFrame([{"Item": i, "Qtd": 0} for i in lista]), use_container_width=True, hide_index=True)
                 if st.button("✅ Salvar"):
-                    executar_query("UPDATE lotes SET status='Pronto', fim_secagem=:dt, inicio_acabamento=:dt, operador_acabamento=:op WHERE id=:id", {"dt": datetime.now().strftime("%Y-%m-%d %H:%M"), "op": st.session_state['operador'], "id": id_l})
+                    dt = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    executar_query("UPDATE lotes SET status='Pronto', fim_secagem=:dt, inicio_acabamento=:dt, operador_acabamento=:op WHERE id=:id", {"dt": dt, "op": st.session_state['operador'], "id": id_l})
                     for _, r in ed.iterrows():
                         if r['Qtd'] > 0: executar_query("INSERT INTO contagem_itens VALUES (:id, :it, :q)", {"id": id_l, "it": r['Item'], "q": r['Qtd']})
                     st.rerun()
@@ -191,7 +201,7 @@ else:
         df = consultar_db("SELECT id, hospital, status FROM lotes WHERE status IN ('Pronto', 'Disponível')")
         if not df.empty:
             sel = st.selectbox("Lote:", df['id'].astype(str) + " - " + df['hospital'])
-            id_l = int(sel.split(" - ")[0])
+            id_l = int(sel.split(" - "))
             if df[df['id']==id_l].iloc[0]['status'] == 'Pronto':
                 ps, gai = st.number_input("Peso Saída", min_value=0.1), st.text_input("Gaiola N°")
                 if st.button("✅ Liberar"):
@@ -213,9 +223,7 @@ else:
                 st.subheader("👷 Top 3 Colaboradores (Kg)")
                 ops = pd.concat([df[['operador_lavagem', 'peso_entrada']].rename(columns={'operador_lavagem': 'op'}), df[['operador_secagem', 'peso_entrada']].rename(columns={'operador_secagem': 'op'}), df[['operador_acabamento', 'peso_entrada']].rename(columns={'operador_acabamento': 'op'})])
                 st.write(ops.dropna().groupby('op')['peso_entrada'].sum().sort_values(ascending=False).head(3))
-            
-            st.divider()
-            st.dataframe(df)
+            st.divider(); st.dataframe(df)
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df.to_excel(wr, index=False)
             st.download_button("📥 Exportar Excel", buf.getvalue(), "relatorio.xlsx")
